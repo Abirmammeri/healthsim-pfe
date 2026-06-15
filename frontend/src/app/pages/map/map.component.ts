@@ -4,14 +4,8 @@ import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import * as L from 'leaflet';
 import { ApiService } from '../../shared/api.service';
+import { AuthService } from '../../shared/auth.service';
 import { Hospital, SummaryStats } from '../../shared/models';
-
-const HOSPITAL_COORDS: Record<string, [number, number]> = {
-  'CHU Benbadis Constantine': [36.3650, 6.6147],
-  'Polyclinique El Khroub': [36.2667, 6.6833],
-  'Polyclinique Boumerzoug': [36.3406, 6.5581],
-  'Polyclinique Pierre Chaulet': [36.3500, 6.6000],
-};
 
 @Component({
   selector: 'app-map',
@@ -36,7 +30,7 @@ const HOSPITAL_COORDS: Record<string, [number, number]> = {
         </div>
         <div class="flex items-center gap-3">
           <div class="w-9 h-9 rounded-lg flex items-center justify-center bg-green-50">
-            <lucide-icon name="bed-double" class="w-4 h-4 text-green-600"></lucide-icon>
+            <lucide-icon name="bed" class="w-4 h-4 text-green-600"></lucide-icon>
           </div>
           <div>
             <div class="text-lg font-bold text-foreground">{{ s.availableBeds }}/{{ s.totalBeds }}</div>
@@ -64,17 +58,20 @@ const HOSPITAL_COORDS: Record<string, [number, number]> = {
       </div>
 
       <div class="flex-1 relative">
-        <div *ngIf="loading()" class="flex items-center justify-center h-full">
-          <div class="text-muted-foreground">Loading hospitals...</div>
+        <div *ngIf="loading()"
+             class="absolute inset-0 z-[1000] flex items-center justify-center bg-background/80">
+          <div class="flex items-center gap-2 text-muted-foreground text-sm font-medium">
+            <lucide-icon name="loader-2" class="w-4 h-4 animate-spin"></lucide-icon>
+            Chargement des structures…
+          </div>
         </div>
-        <div #mapEl class="absolute inset-0" data-testid="map-container" [style.display]="loading() ? 'none' : 'block'"></div>
+        <div #mapEl class="absolute inset-0" data-testid="map-container"></div>
       </div>
 
       <div *ngIf="hospitals().length > 0" class="px-8 py-4 bg-card border-t">
         <div class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Structures du réseau</div>
         <div class="grid grid-cols-4 gap-3">
           <button *ngFor="let h of hospitals()"
-                  [attr.data-testid]="'card-hospital-' + h.id"
                   (click)="open(h.id)"
                   class="text-left p-3 rounded-xl border border-border hover:border-primary/40 hover:shadow-md transition-all bg-card">
             <div class="flex items-center justify-between mb-2">
@@ -90,26 +87,30 @@ const HOSPITAL_COORDS: Record<string, [number, number]> = {
   `,
 })
 export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
-  private api = inject(ApiService);
+  private api    = inject(ApiService);
+  private auth   = inject(AuthService);
   private router = inject(Router);
   @ViewChild('mapEl') mapEl!: ElementRef<HTMLDivElement>;
 
   hospitals = signal<Hospital[]>([]);
-  summary = signal<SummaryStats | null>(null);
-  loading = signal(true);
+  summary   = signal<SummaryStats | null>(null);
+  loading   = signal(true);
   private map?: L.Map;
   private viewReady = false;
 
   ngOnInit() {
     this.api.listHospitals().subscribe({
-      next: (h) => { this.hospitals.set(h); this.loading.set(false); this.tryRender(); },
+      next: (h) => {
+        this.hospitals.set(h);
+        this.loading.set(false);
+        setTimeout(() => this.tryRender(), 0);
+      },
       error: () => { this.loading.set(false); },
     });
     this.api.getSummary().subscribe({ next: (s) => this.summary.set(s), error: () => {} });
   }
 
-  ngAfterViewInit() { this.viewReady = true; this.tryRender(); }
-
+  ngAfterViewInit() { this.viewReady = true; setTimeout(() => this.tryRender(), 0); }
   ngOnDestroy() { this.map?.remove(); }
 
   private tryRender() {
@@ -119,12 +120,13 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(this.map);
-    setTimeout(() => this.map?.invalidateSize(), 0);
+    setTimeout(() => this.map?.invalidateSize(), 100);
 
     for (const h of this.hospitals()) {
-      const coords = HOSPITAL_COORDS[h.name] ?? [36.34, 6.62];
+      const lat = parseFloat(String(h.latitude)) || 36.34;
+      const lng = parseFloat(String(h.longitude)) || 6.62;
       const color = this.statusColor(h.loadStatus);
-      const marker = L.circleMarker(coords as L.LatLngTuple, {
+      const marker = L.circleMarker([lat, lng] as L.LatLngTuple, {
         radius: 18, fillColor: color, fillOpacity: 0.85, color: 'white', weight: 3,
       }).addTo(this.map);
       const popup = `
@@ -132,27 +134,35 @@ export class MapComponent implements OnInit, AfterViewInit, OnDestroy {
           <div style="font-weight:600;color:#111827;font-size:14px;margin-bottom:8px">${h.name}</div>
           <div style="font-size:12px;color:#4b5563;display:flex;flex-direction:column;gap:4px">
             <div style="display:flex;justify-content:space-between"><span>Patients :</span><span style="font-weight:500">${h.patients}</span></div>
-            <div style="display:flex;justify-content:space-between"><span>Lits disponibles :</span><span style="font-weight:500">${h.availableBeds}/${h.totalBeds}</span></div>
+            <div style="display:flex;justify-content:space-between"><span>Lits :</span><span style="font-weight:500">${h.availableBeds}/${h.totalBeds}</span></div>
             <div style="display:flex;justify-content:space-between"><span>Statut :</span><span style="font-weight:600;color:${color}">${this.statusLabel(h.loadStatus)}</span></div>
           </div>
-          <button data-popup-open="${h.id}" style="margin-top:12px;width:100%;padding:6px;font-size:12px;font-weight:600;color:white;background:#00BCD4;border:none;border-radius:4px;cursor:pointer">Ouvrir le tableau de bord</button>
+          <button data-popup-open="${h.id}" style="margin-top:12px;width:100%;padding:6px;font-size:12px;font-weight:600;color:white;background:#00BCD4;border:none;border-radius:4px;cursor:pointer">Ouvrir</button>
         </div>
       `;
       marker.bindTooltip(h.name, { direction: 'top', offset: [0, -8] });
       marker.bindPopup(popup);
-      // Direct navigation on marker click — open the dashboard of that structure.
       marker.on('click', () => this.open(h.id));
       marker.on('popupopen', () => {
         const btn = document.querySelector(`[data-popup-open="${h.id}"]`) as HTMLButtonElement | null;
         btn?.addEventListener('click', () => this.open(h.id));
       });
-      // Accessibility: pointer cursor on marker
       const el = (marker as any)._path as SVGElement | undefined;
-      if (el) { el.style.cursor = 'pointer'; el.setAttribute('data-testid', `map-marker-${h.id}`); }
+      if (el) { el.style.cursor = 'pointer'; }
     }
   }
 
-  open(id: number) { this.router.navigate(['/hospitals', id]); }
+  // Redirection selon rôle
+  open(id: number) {
+    const user = this.auth.currentUser();
+    if (user?.role === 'chef_service' && user.service_id) {
+      // Chef de service → directement son service
+      this.router.navigate(['/hospitals', id, 'services', user.service_id]);
+    } else {
+      // Directeur → dashboard hôpital
+      this.router.navigate(['/hospitals', id]);
+    }
+  }
 
   statusColor(s: string): string {
     if (s === 'critical') return '#E53935';

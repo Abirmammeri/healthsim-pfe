@@ -1,26 +1,29 @@
-import { Component, Input, OnChanges, OnInit, SimpleChanges, inject, signal } from '@angular/core';
+import { Component, Input, OnChanges, OnInit, Output, EventEmitter, SimpleChanges, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
+import { HttpClient } from '@angular/common/http';
 import { ApiService } from './api.service';
 import { Hospital, Service, Equipment } from './models';
 import { PRIMARY } from './simulation-engine';
 import { ToastService } from './toast.service';
+import { SimulationStoreService } from './simulation-store.service';
 
-const SPECIALTIES = [
-  'Cardiologie', 'Neurologie', 'Pneumologie', 'Gastroentérologie',
-  'Néphrologie', 'Endocrinologie', 'Oncologie', 'Pédiatrie',
-  'Gynécologie', 'Psychiatrie', 'Dermatologie', 'Rhumatologie',
-];
+const PRIMARY_DARK = '#0288D1';
+const GREEN        = '#43A047';
+const ORANGE       = '#FB8C00';
+const RED          = '#E53935';
+const BASE         = 'http://localhost:8000/api';
 
-interface SpecialistAction {
+const AGENTS_SPECIALISES = ['Psychologue', 'Assistant général', 'Kinésithérapeute', 'Diabétologue'];
+
+export interface TransferAction {
   id: string;
-  fromHospitalId: number;
-  fromHospitalName: string;
-  toHospitalId: number;
-  toHospitalName: string;
-  specialty: string;
-  count: number;
+  type: 'equipment' | 'medecin' | 'infirmier' | 'agent';
+  label: string;
+  detail: string;
+  isNewEquipment?: boolean;
+  data: any;
 }
 
 @Component({
@@ -29,288 +32,353 @@ interface SpecialistAction {
   imports: [CommonModule, FormsModule, LucideAngularModule],
   template: `
     <div class="bg-card rounded-2xl border border-border shadow-sm overflow-hidden" data-testid="resource-management-panel">
-      <div class="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
-        <lucide-icon name="arrow-left-right" class="w-4 h-4" [style.color]="PRIMARY"></lucide-icon>
-        <h2 class="font-bold text-foreground text-sm">Gestion des ressources</h2>
-        <span class="ml-auto text-[11px] text-muted-foreground">Transferts entre services et structures</span>
+
+      <!-- HEADER -->
+      <div class="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2 flex-wrap">
+        <lucide-icon name="arrow-right" class="w-4 h-4" [style.color]="PRIMARY"></lucide-icon>
+        <h2 class="font-bold text-foreground text-sm">Transferts entre services</h2>
+        <span class="ml-auto text-[11px] px-2 py-0.5 rounded-full font-semibold flex items-center gap-1"
+              style="background:#00BCD415;color:#0288D1">
+          <lucide-icon name="activity" class="w-3 h-3"></lucide-icon>
+          Mode simulation — virtuel
+        </span>
       </div>
 
-      <!-- Outer tabs -->
-      <div class="flex border-b border-border bg-card">
-        <button (click)="rootTab.set('equipment')"
-                [class.text-foreground]="rootTab() === 'equipment'"
-                [class.text-muted-foreground]="rootTab() !== 'equipment'"
-                [style.borderBottomColor]="rootTab() === 'equipment' ? PRIMARY : 'transparent'"
-                class="px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors hover:bg-muted/30"
-                data-testid="rmp-tab-equipment">
-          <lucide-icon name="wrench" class="w-3.5 h-3.5 inline mr-1.5"></lucide-icon>
-          Ressources matérielles
+      <!-- Tabs -->
+      <div class="flex border-b border-border bg-card overflow-x-auto">
+        <button *ngFor="let tab of tabs" (click)="rootTab.set(tab.key)"
+                [class.text-foreground]="rootTab() === tab.key"
+                [class.text-muted-foreground]="rootTab() !== tab.key"
+                [style.borderBottomColor]="rootTab() === tab.key ? PRIMARY : 'transparent'"
+                class="px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors hover:bg-muted/30 whitespace-nowrap flex items-center gap-1.5">
+          <lucide-icon [name]="tab.icon" class="w-3.5 h-3.5"></lucide-icon>
+          {{ tab.label }}
         </button>
-        <button (click)="rootTab.set('staff')"
-                [class.text-foreground]="rootTab() === 'staff'"
-                [class.text-muted-foreground]="rootTab() !== 'staff'"
-                [style.borderBottomColor]="rootTab() === 'staff' ? PRIMARY : 'transparent'"
-                class="px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors hover:bg-muted/30"
-                data-testid="rmp-tab-staff">
-          <lucide-icon name="users" class="w-3.5 h-3.5 inline mr-1.5"></lucide-icon>
-          Ressources humaines
+        <button (click)="rootTab.set('journal')"
+                [class.text-foreground]="rootTab() === 'journal'"
+                [class.text-muted-foreground]="rootTab() !== 'journal'"
+                [style.borderBottomColor]="rootTab() === 'journal' ? PRIMARY : 'transparent'"
+                class="px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors hover:bg-muted/30 flex items-center gap-1.5">
+          <lucide-icon name="activity" class="w-3.5 h-3.5"></lucide-icon>
+          Journal
+          <span *ngIf="transfers().length > 0"
+                class="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white"
+                [style.backgroundColor]="PRIMARY">{{ transfers().length }}</span>
         </button>
       </div>
 
-      <!-- ============ EQUIPMENT TAB ============ -->
+      <!-- Sélecteur hôpital commun -->
+      <div class="px-4 pt-4 pb-2" *ngIf="rootTab() !== 'journal'">
+        <label class="block">
+          <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Structure</span>
+          <select [(ngModel)]="selectedHospitalId" (ngModelChange)="onHospitalChange($event)"
+                  class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background">
+            <option [ngValue]="null">— Sélectionner —</option>
+            <option *ngFor="let h of hospitals" [ngValue]="h.id">{{ h.name }}</option>
+          </select>
+        </label>
+      </div>
+
+      <!-- TAB ÉQUIPEMENTS -->
       <div *ngIf="rootTab() === 'equipment'" class="p-4 space-y-3">
-        <div class="flex gap-1 bg-muted/40 p-1 rounded-lg w-fit">
-          <button (click)="setEqMode('same-hospital')"
-                  [class.bg-card]="eqMode() === 'same-hospital'"
-                  [class.shadow-sm]="eqMode() === 'same-hospital'"
-                  class="px-3 py-1 text-xs font-semibold rounded-md transition-colors"
-                  data-testid="rmp-eq-trf-svc">
-            Entre services
-          </button>
-          <button (click)="setEqMode('cross-hospital')"
-                  [class.bg-card]="eqMode() === 'cross-hospital'"
-                  [class.shadow-sm]="eqMode() === 'cross-hospital'"
-                  class="px-3 py-1 text-xs font-semibold rounded-md transition-colors"
-                  data-testid="rmp-eq-trf-hosp">
-            Entre structures
-          </button>
-        </div>
 
-        <div class="space-y-3" [attr.data-testid]="'rmp-form-eq-trf-' + eqMode()">
-          <div class="grid grid-cols-2 gap-2">
-            <label class="block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Structure source</span>
-              <select [(ngModel)]="eq.fromHospitalId" (ngModelChange)="onEqFromHospital($event)"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                      data-testid="rmp-eq-trf-hosp-from">
-                <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let h of hospitals" [ngValue]="h.id">{{ h.name }}</option>
-              </select>
-            </label>
-            <label class="block" *ngIf="eqMode() === 'cross-hospital'">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Structure cible</span>
-              <select [(ngModel)]="eq.toHospitalId" (ngModelChange)="onEqToHospital($event)"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                      data-testid="rmp-eq-trf-hosp-to">
-                <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let h of hospitals" [ngValue]="h.id">{{ h.name }}</option>
-              </select>
-            </label>
-            <div *ngIf="eqMode() === 'same-hospital'" class="text-[11px] text-muted-foreground self-end pb-2">
-              Transfert au sein de la même structure.
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2">
+        <!-- DIRECTEUR -->
+        <ng-container *ngIf="isDirecteur">
+          <div class="grid grid-cols-2 gap-3">
             <label class="block">
               <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service source</span>
               <select [(ngModel)]="eq.fromServiceId" (ngModelChange)="onEqFromService($event)"
-                      [disabled]="!eq.fromHospitalId"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50"
-                      data-testid="rmp-eq-trf-svc-from">
+                      [disabled]="!selectedHospitalId"
+                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
                 <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let s of eq.fromServices" [ngValue]="s.id">{{ s.name }}</option>
+                <option *ngFor="let s of services" [ngValue]="s.id">{{ s.name }}</option>
               </select>
             </label>
             <label class="block">
               <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service cible</span>
-              <select [(ngModel)]="eq.toServiceId"
-                      [disabled]="!effectiveEqToHospitalId()"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50"
-                      data-testid="rmp-eq-trf-svc-to">
+              <!-- ✅ CORRECTION : ajout (ngModelChange)="onEqToService($event)" -->
+              <select [(ngModel)]="eq.toServiceId" (ngModelChange)="onEqToService($event)"
+                      [disabled]="!eq.fromServiceId"
+                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
                 <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let s of eqToServicesFiltered()" [ngValue]="s.id">{{ s.name }}</option>
+                <option *ngFor="let s of servicesFiltered(eq.fromServiceId)" [ngValue]="s.id">{{ s.name }}</option>
               </select>
             </label>
+          </div>
+
+          <!-- Spinner -->
+          <div *ngIf="eq.loadingEquipment" class="flex items-center gap-2 text-xs text-muted-foreground py-1">
+            <lucide-icon name="loader-2" class="w-3.5 h-3.5 animate-spin"></lucide-icon>
+            Chargement des équipements depuis la base de données…
+          </div>
+
+          <!-- Aucun équipement -->
+          <div *ngIf="!eq.loadingEquipment && eq.fromServiceId && eq.sourceEquipment.length === 0"
+               class="text-xs text-muted-foreground italic py-1 flex items-center gap-1.5">
+            <lucide-icon name="alert-circle" class="w-3.5 h-3.5 text-orange-400"></lucide-icon>
+            Aucun équipement trouvé dans ce service.
           </div>
 
           <div class="grid grid-cols-12 gap-2 items-end">
             <label class="col-span-7 block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Équipement à transférer</span>
-              <select [(ngModel)]="eq.equipmentId"
-                      [disabled]="eq.sourceEquipment.length === 0"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50"
-                      data-testid="rmp-eq-trf-equipment">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Équipement</span>
+              <!-- ✅ CORRECTION : ajout (ngModelChange)="onEqSelected($event)" -->
+              <select [(ngModel)]="eq.equipmentId" (ngModelChange)="onEqSelected($event)"
+                      [disabled]="eq.sourceEquipment.length === 0 || eq.loadingEquipment"
+                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
                 <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let e of eq.sourceEquipment" [ngValue]="e.id">
-                  {{ e.name }} (×{{ e.quantity }})
-                </option>
+                <option *ngFor="let e of eq.sourceEquipment" [ngValue]="e.id">{{ e.name }} (×{{ e.quantity || e.quantite }})</option>
               </select>
             </label>
             <label class="col-span-2 block">
               <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Qté</span>
-              <input type="number" min="1" [(ngModel)]="eq.quantity"
-                     class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                     data-testid="rmp-eq-trf-quantity" />
+              <input type="number" min="1" [(ngModel)]="eq.quantity" class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"/>
             </label>
             <button (click)="submitEqTransfer()"
-                    [disabled]="eqSubmitting()"
-                    class="col-span-3 text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5 disabled:opacity-60"
-                    [style.backgroundColor]="PRIMARY"
-                    data-testid="rmp-eq-trf-submit">
-              <lucide-icon name="arrow-left-right" class="w-3.5 h-3.5"></lucide-icon>
-              Transférer
+                    [disabled]="!eq.fromServiceId || !eq.toServiceId || !eq.equipmentId"
+                    class="col-span-3 text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    [style.backgroundColor]="PRIMARY">
+              <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>Planifier
             </button>
           </div>
+
+          <!-- ✅ NOUVEAU : alerte équipement absent dans la cible -->
+          <div *ngIf="eq.isNewInTarget && eq.equipmentId && eq.toServiceId"
+               class="text-[11px] px-3 py-2.5 rounded-lg flex items-start gap-2"
+               style="background:#FFF3E0;border:1px solid #FB8C0050;color:#E65100">
+            <lucide-icon name="alert-circle" class="w-3.5 h-3.5 flex-shrink-0 mt-0.5"></lucide-icon>
+            <span>Cet équipement <b>n'existe pas encore</b> dans le service cible.
+            Il sera <b>créé automatiquement</b> lors de l'application avec un
+            <b>taux d'utilisation virtuel de 0%</b>.
+            Le chef de service devra le mettre à jour ensuite.</span>
+          </div>
+        </ng-container>
+
+        <!-- CHEF DE SERVICE -->
+        <ng-container *ngIf="!isDirecteur">
+          <div class="grid grid-cols-12 gap-2 items-end">
+            <label class="col-span-12 block">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Demander depuis le service</span>
+              <select [(ngModel)]="eq.fromServiceId" (ngModelChange)="onEqFromService($event)"
+                      [disabled]="!selectedHospitalId"
+                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+                <option [ngValue]="null">— Sélectionner un service —</option>
+                <option *ngFor="let s of servicesFiltered(userServiceId)" [ngValue]="s.id">{{ s.name }}</option>
+              </select>
+            </label>
+
+            <!-- Spinner -->
+            <div *ngIf="eq.loadingEquipment" class="col-span-12 flex items-center gap-2 text-xs text-muted-foreground py-1">
+              <lucide-icon name="loader-2" class="w-3.5 h-3.5 animate-spin"></lucide-icon>
+              Chargement…
+            </div>
+
+            <label class="col-span-7 block">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Équipement</span>
+              <select [(ngModel)]="eq.equipmentId" (ngModelChange)="onEqSelectedChef($event)"
+                      [disabled]="eq.sourceEquipment.length === 0 || eq.loadingEquipment"
+                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+                <option [ngValue]="null">— Sélectionner —</option>
+                <option *ngFor="let e of eq.sourceEquipment" [ngValue]="e.id">{{ e.name }} (×{{ e.quantity || e.quantite }})</option>
+              </select>
+            </label>
+            <label class="col-span-2 block">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Qté</span>
+              <input type="number" min="1" [(ngModel)]="eq.quantity" class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"/>
+            </label>
+            <button (click)="submitEqTransferChef()" class="col-span-3 text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5" [style.backgroundColor]="PRIMARY">
+              <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>Planifier
+            </button>
+          </div>
+
+          <!-- Alerte équipement nouveau dans le service du chef -->
+          <div *ngIf="eq.isNewInTargetChef && eq.equipmentId"
+               class="text-[11px] px-3 py-2.5 rounded-lg flex items-start gap-2"
+               style="background:#FFF3E0;border:1px solid #FB8C0050;color:#E65100">
+            <lucide-icon name="alert-circle" class="w-3.5 h-3.5 flex-shrink-0 mt-0.5"></lucide-icon>
+            <span>Cet équipement <b>n'est pas encore</b> dans votre service.
+            Il sera <b>créé avec taux d'utilisation 0%</b> lors de l'application.</span>
+          </div>
+        </ng-container>
+      </div>
+
+      <!-- TAB MÉDECINS -->
+      <div *ngIf="rootTab() === 'medecin'" class="p-4 space-y-3">
+        <ng-container *ngIf="isDirecteur" [ngTemplateOutlet]="staffForm"
+          [ngTemplateOutletContext]="{type:'medecin',label:'médecins'}"></ng-container>
+        <ng-container *ngIf="!isDirecteur">
+          <div class="grid grid-cols-3 gap-3">
+            <label class="block col-span-3">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Demander depuis le service</span>
+              <select [(ngModel)]="staff.fromServiceId" [disabled]="!selectedHospitalId"
+                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+                <option [ngValue]="null">— Sélectionner un service —</option>
+                <option *ngFor="let s of servicesFiltered(userServiceId)" [ngValue]="s.id">{{ s.name }} ({{ s.doctors }} méd.)</option>
+              </select>
+            </label>
+            <label class="block col-span-2">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Nombre à demander</span>
+              <input type="number" min="1" [(ngModel)]="staff.count" class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"/>
+            </label>
+            <button (click)="submitStaffTransferChef('medecin')" class="self-end text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5" [style.backgroundColor]="PRIMARY">
+              <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>Planifier
+            </button>
+          </div>
+        </ng-container>
+      </div>
+
+      <!-- TAB INFIRMIERS -->
+      <div *ngIf="rootTab() === 'infirmier'" class="p-4 space-y-3">
+        <ng-container *ngIf="isDirecteur" [ngTemplateOutlet]="staffForm"
+          [ngTemplateOutletContext]="{type:'infirmier',label:'infirmiers'}"></ng-container>
+        <ng-container *ngIf="!isDirecteur">
+          <div class="grid grid-cols-3 gap-3">
+            <label class="block col-span-3">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Demander depuis le service</span>
+              <select [(ngModel)]="staff.fromServiceId" [disabled]="!selectedHospitalId"
+                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+                <option [ngValue]="null">— Sélectionner un service —</option>
+                <option *ngFor="let s of servicesFiltered(userServiceId)" [ngValue]="s.id">{{ s.name }} ({{ s.nurses }} inf.)</option>
+              </select>
+            </label>
+            <label class="block col-span-2">
+              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Nombre à demander</span>
+              <input type="number" min="1" [(ngModel)]="staff.count" class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"/>
+            </label>
+            <button (click)="submitStaffTransferChef('infirmier')" class="self-end text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5" [style.backgroundColor]="PRIMARY">
+              <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>Planifier
+            </button>
+          </div>
+        </ng-container>
+      </div>
+
+      <!-- TAB AGENTS SPÉCIALISÉS -->
+      <div *ngIf="rootTab() === 'agent'" class="p-4 space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service source</span>
+            <select [(ngModel)]="agent.fromServiceId" [disabled]="!selectedHospitalId"
+                    class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+              <option [ngValue]="null">— Sélectionner —</option>
+              <option *ngFor="let s of services" [ngValue]="s.id">{{ s.name }}</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service cible</span>
+            <select [(ngModel)]="agent.toServiceId" [disabled]="!agent.fromServiceId"
+                    class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+              <option [ngValue]="null">— Sélectionner —</option>
+              <option *ngFor="let s of servicesFiltered(agent.fromServiceId)" [ngValue]="s.id">{{ s.name }}</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid grid-cols-12 gap-2 items-end">
+          <label class="col-span-5 block">
+            <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Type d'agent</span>
+            <select [(ngModel)]="agent.type" class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background">
+              <option *ngFor="let a of agentsSpecialises" [value]="a">{{ a }}</option>
+            </select>
+          </label>
+          <label class="col-span-4 block">
+            <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Nombre</span>
+            <input type="number" min="1" [(ngModel)]="agent.count" class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"/>
+          </label>
+          <button (click)="submitAgentTransfer()" class="col-span-3 text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5" [style.backgroundColor]="PRIMARY">
+            <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>Planifier
+          </button>
         </div>
       </div>
 
-      <!-- ============ STAFF TAB ============ -->
-      <div *ngIf="rootTab() === 'staff'" class="p-4 space-y-3">
-        <div class="flex gap-1 bg-muted/40 p-1 rounded-lg w-fit">
-          <button (click)="staffMode.set('nurse')"
-                  [class.bg-card]="staffMode() === 'nurse'"
-                  [class.shadow-sm]="staffMode() === 'nurse'"
-                  class="px-3 py-1 text-xs font-semibold rounded-md transition-colors"
-                  data-testid="rmp-tab-staff-nurse">
-            Infirmiers
-          </button>
-          <button (click)="staffMode.set('doctor')"
-                  [class.bg-card]="staffMode() === 'doctor'"
-                  [class.shadow-sm]="staffMode() === 'doctor'"
-                  class="px-3 py-1 text-xs font-semibold rounded-md transition-colors"
-                  data-testid="rmp-tab-staff-doctor-gen">
-            Médecins généralistes
-          </button>
-          <button (click)="staffMode.set('specialist')"
-                  [class.bg-card]="staffMode() === 'specialist'"
-                  [class.shadow-sm]="staffMode() === 'specialist'"
-                  class="px-3 py-1 text-xs font-semibold rounded-md transition-colors"
-                  data-testid="rmp-tab-staff-doctor-spec">
-            Médecins spécialisés
+      <!-- TEMPLATE STAFF -->
+      <ng-template #staffForm let-type="type" let-label="label">
+        <div class="grid grid-cols-3 gap-3">
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service source</span>
+            <select [(ngModel)]="staff.fromServiceId" [disabled]="!selectedHospitalId"
+                    class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+              <option [ngValue]="null">— Sélectionner —</option>
+              <option *ngFor="let s of services" [ngValue]="s.id">
+                {{ s.name }} ({{ type === 'medecin' ? s.doctors : s.nurses }} disp.)
+              </option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service cible</span>
+            <select [(ngModel)]="staff.toServiceId" [disabled]="!staff.fromServiceId"
+                    class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50">
+              <option [ngValue]="null">— Sélectionner —</option>
+              <option *ngFor="let s of servicesFiltered(staff.fromServiceId)" [ngValue]="s.id">{{ s.name }}</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Nombre</span>
+            <input type="number" min="1" [(ngModel)]="staff.count" class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"/>
+          </label>
+        </div>
+        <div class="flex justify-end">
+          <button (click)="submitStaffTransfer(type)" class="text-xs px-4 py-1.5 rounded-md text-white font-semibold flex items-center gap-1.5" [style.backgroundColor]="PRIMARY">
+            <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>Planifier le transfert
           </button>
         </div>
+      </ng-template>
 
-        <!-- Nurse / Doctor general -->
-        <div *ngIf="staffMode() !== 'specialist'" class="space-y-3" [attr.data-testid]="'rmp-form-staff-' + staffMode()">
-          <div class="text-[11px] text-muted-foreground flex items-center gap-1.5">
-            <lucide-icon [name]="staffMode() === 'nurse' ? 'heart-pulse' : 'stethoscope'" class="w-3.5 h-3.5" [style.color]="PRIMARY"></lucide-icon>
-            Redistribution des {{ staffMode() === 'nurse' ? 'infirmiers' : 'médecins généralistes' }} entre services d'une même structure.
+      <!-- TAB JOURNAL -->
+      <div *ngIf="rootTab() === 'journal'" class="p-4">
+        <div *ngIf="transfers().length === 0" class="text-center py-8 text-muted-foreground text-sm">
+          <lucide-icon name="activity" class="w-8 h-8 mx-auto mb-2 opacity-30"></lucide-icon>
+          Aucun transfert planifié.
+        </div>
+
+        <div *ngIf="transfers().length > 0" class="space-y-3">
+          <div class="text-[11px] px-3 py-2 rounded-lg flex items-center gap-2" style="background:#00BCD410;color:#0288D1">
+            <lucide-icon name="check-circle" class="w-3.5 h-3.5 flex-shrink-0"></lucide-icon>
+            <span><b>Simulation virtuelle</b> — Les ressources ci-dessous sont déjà reflétées dans les sliders. Lancez la simulation pour voir l'impact sur les KPIs.</span>
           </div>
-          <div class="grid grid-cols-3 gap-2">
-            <label class="block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Structure</span>
-              <select [(ngModel)]="staff.hospitalId" (ngModelChange)="onStaffHospital($event)"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                      [attr.data-testid]="'rmp-staff-' + staffMode() + '-hosp'">
-                <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let h of hospitals" [ngValue]="h.id">{{ h.name }}</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service source</span>
-              <select [(ngModel)]="staff.fromId" (ngModelChange)="onStaffFromService($event)"
-                      [disabled]="!staff.hospitalId"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50"
-                      [attr.data-testid]="'rmp-staff-' + staffMode() + '-from'">
-                <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let s of staff.services" [ngValue]="s.id">{{ s.name }}</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Service cible</span>
-              <select [(ngModel)]="staff.toId"
-                      [disabled]="!staff.hospitalId"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background disabled:opacity-50"
-                      [attr.data-testid]="'rmp-staff-' + staffMode() + '-to'">
-                <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let s of staffToServicesFiltered()" [ngValue]="s.id">{{ s.name }}</option>
-              </select>
-            </label>
-          </div>
-          <div class="grid grid-cols-12 gap-2 items-end">
-            <div class="col-span-8 text-[11px] text-muted-foreground">
-              <ng-container *ngIf="staffFromService() as fs">
-                Disponible dans <b class="text-foreground">{{ fs.name }}</b> :
-                <b class="text-foreground">{{ staffMode() === 'nurse' ? fs.nurses : fs.doctors }}</b>
-                {{ staffMode() === 'nurse' ? 'infirmiers' : 'médecins généralistes' }}
-              </ng-container>
-              <ng-container *ngIf="!staffFromService()">
-                Sélectionnez un service source pour voir les effectifs disponibles.
-              </ng-container>
+
+          <div class="space-y-2">
+            <div *ngFor="let t of transfers()"
+                 class="flex items-center gap-3 px-3 py-2.5 rounded-xl border"
+                 [style.borderColor]="transferColor(t.type)+'30'"
+                 [style.backgroundColor]="transferColor(t.type)+'08'">
+              <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                   [style.backgroundColor]="transferColor(t.type)+'18'">
+                <lucide-icon [name]="transferIcon(t.type)" class="w-4 h-4" [style.color]="transferColor(t.type)"></lucide-icon>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs font-semibold text-foreground flex items-center gap-1.5 flex-wrap">
+                  {{ t.label }}
+                  <!-- ✅ Badge "NOUVEAU" pour équipements absents dans la cible -->
+                  <span *ngIf="t.isNewEquipment"
+                        class="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                        style="background:#FF6F0020;color:#E65100;border:1px solid #FB8C0040">
+                    ✦ NOUVEAU DANS CIBLE
+                  </span>
+                </div>
+                <div class="text-[11px] text-muted-foreground mt-0.5">{{ t.detail }}</div>
+              </div>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
+                    [style.backgroundColor]="transferColor(t.type)+'15'"
+                    [style.color]="transferColor(t.type)">{{ transferTypeLabel(t.type) }}</span>
+              <button (click)="removeTransfer(t.id)"
+                      class="p-1 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-red-500">
+                <lucide-icon name="x" class="w-3.5 h-3.5"></lucide-icon>
+              </button>
             </div>
-            <input type="number" min="1" [(ngModel)]="staff.count"
-                   class="col-span-2 text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                   [attr.data-testid]="'rmp-staff-' + staffMode() + '-count'" />
-            <button (click)="submitStaffTransfer()"
-                    [disabled]="staffSubmitting()"
-                    class="col-span-2 text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5 disabled:opacity-60"
-                    [style.backgroundColor]="PRIMARY"
-                    [attr.data-testid]="'rmp-staff-' + staffMode() + '-submit'">
-              <lucide-icon name="arrow-left-right" class="w-3.5 h-3.5"></lucide-icon>
-              Transférer
-            </button>
-          </div>
-        </div>
-
-        <!-- Specialist (frontend-only planned) -->
-        <div *ngIf="staffMode() === 'specialist'" class="space-y-3" data-testid="rmp-form-staff-doctors-spec">
-          <div class="text-[11px] text-muted-foreground flex items-center gap-1.5">
-            <lucide-icon name="graduation-cap" class="w-3.5 h-3.5" [style.color]="PRIMARY"></lucide-icon>
-            Transfert de médecins spécialisés entre structures (action de simulation).
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <label class="block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Structure source</span>
-              <select [(ngModel)]="spec.fromHospitalId"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                      data-testid="rmp-spec-hosp-from">
-                <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let h of hospitals" [ngValue]="h.id">{{ h.name }}</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Structure cible</span>
-              <select [(ngModel)]="spec.toHospitalId"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                      data-testid="rmp-spec-hosp-to">
-                <option [ngValue]="null">— Sélectionner —</option>
-                <option *ngFor="let h of hospitals" [ngValue]="h.id">{{ h.name }}</option>
-              </select>
-            </label>
-          </div>
-          <div class="grid grid-cols-12 gap-2 items-end">
-            <label class="col-span-6 block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Spécialité</span>
-              <select [(ngModel)]="spec.specialty"
-                      class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                      data-testid="rmp-spec-specialty">
-                <option *ngFor="let s of specialties" [value]="s">{{ s }}</option>
-              </select>
-            </label>
-            <label class="col-span-3 block">
-              <span class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold">Nombre</span>
-              <input type="number" min="1" [(ngModel)]="spec.count"
-                     class="mt-1 w-full text-xs px-2 py-1.5 rounded-md border border-border bg-background"
-                     data-testid="rmp-spec-count" />
-            </label>
-            <button (click)="submitSpecialistTransfer()"
-                    class="col-span-3 text-xs px-3 py-1.5 rounded-md text-white font-semibold flex items-center justify-center gap-1.5"
-                    [style.backgroundColor]="PRIMARY"
-                    data-testid="rmp-spec-submit">
-              <lucide-icon name="plus" class="w-3.5 h-3.5"></lucide-icon>
-              Transférer
-            </button>
           </div>
 
-          <div *ngIf="specialistActions().length > 0" class="border-t border-border pt-2">
-            <div class="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">Transferts planifiés</div>
-            <ul class="space-y-1">
-              <li *ngFor="let a of specialistActions()"
-                  class="flex items-center justify-between gap-2 text-xs px-2 py-1.5 rounded-md bg-muted/40 border border-border/60"
-                  [attr.data-testid]="'rmp-spec-action-' + a.id">
-                <span>
-                  <b>{{ a.count }}</b> {{ a.specialty }} :
-                  <b>{{ a.fromHospitalName }}</b> → <b>{{ a.toHospitalName }}</b>
-                </span>
-                <button (click)="removeSpecialistAction(a.id)"
-                        class="p-0.5 text-muted-foreground hover:text-destructive"
-                        aria-label="Supprimer"
-                        [attr.data-testid]="'rmp-spec-remove-' + a.id">
-                  <lucide-icon name="x" class="w-3.5 h-3.5"></lucide-icon>
-                </button>
-              </li>
-            </ul>
+          <!-- Note taux d'utilisation si nouvel équipement -->
+          <div *ngIf="hasNewEquipment()"
+               class="text-[11px] px-3 py-2.5 rounded-lg"
+               style="background:#FFF3E0;border:1px solid #FB8C0040;color:#E65100">
+            ⚠️ Les équipements <b>NOUVEAU DANS CIBLE</b> seront créés lors de l'application
+            avec un <b>taux d'utilisation de 0%</b>. Le chef de service le mettra à jour ensuite.
+          </div>
+
+          <div class="flex items-center pt-3 border-t border-border">
+            <button (click)="clearAll()"
+                    class="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground flex items-center gap-1.5">
+              <lucide-icon name="trash-2" class="w-3 h-3"></lucide-icon>Annuler tous
+            </button>
           </div>
         </div>
       </div>
@@ -320,233 +388,338 @@ interface SpecialistAction {
 export class ResourceManagementPanelComponent implements OnChanges, OnInit {
   @Input() hospitals: Hospital[] = [];
   @Input() defaultHospitalId: number | null = null;
+  @Input() isDirecteur: boolean = true;
+  @Input() userServiceId: number | null = null;
 
-  private api = inject(ApiService);
+  @Output() transferPlanified = new EventEmitter<TransferAction>();
+
+  private api    = inject(ApiService);
+  private http   = inject(HttpClient);      // ✅ AJOUT : pour appels API équipements
   private toasts = inject(ToastService);
+  private store  = inject(SimulationStoreService);
 
   PRIMARY = PRIMARY;
-  specialties = SPECIALTIES;
+  agentsSpecialises = AGENTS_SPECIALISES;
 
-  rootTab = signal<'equipment' | 'staff'>('equipment');
-  eqMode = signal<'same-hospital' | 'cross-hospital'>('same-hospital');
-  staffMode = signal<'nurse' | 'doctor' | 'specialist'>('nurse');
+  readonly tabs = [
+    { key: 'equipment', label: 'Équipements',       icon: 'settings' },
+    { key: 'medecin',   label: 'Médecins',           icon: 'stethoscope' },
+    { key: 'infirmier', label: 'Infirmiers',          icon: 'heart-pulse' },
+    { key: 'agent',     label: 'Agents spécialisés', icon: 'users' },
+  ];
 
+  rootTab   = signal<string>('equipment');
+  transfers = signal<TransferAction[]>([]);
+
+  selectedHospitalId: number | null = null;
+  services: Service[] = [];
+
+  // ✅ CORRECTION : ajout des champs pour chargement API et détection nouveauté
   eq = {
-    fromHospitalId: null as number | null,
-    toHospitalId: null as number | null,
-    fromServiceId: null as number | null,
-    toServiceId: null as number | null,
-    fromServices: [] as Service[],
-    toServices: [] as Service[],
-    sourceEquipment: [] as Equipment[],
-    equipmentId: null as number | null,
-    quantity: 1,
+    fromServiceId:    null as number | null,
+    toServiceId:      null as number | null,
+    sourceEquipment:  [] as any[],
+    targetEquipment:  [] as any[],       // équipements du service cible
+    equipmentId:      null as number | null,
+    quantity:         1,
+    loadingEquipment: false,
+    isNewInTarget:    false,             // directeur : équipement absent dans la cible
+    isNewInTargetChef: false,            // chef de service : équipement absent dans son service
   };
-  eqSubmitting = signal(false);
+  staff = { fromServiceId: null as number|null, toServiceId: null as number|null, count: 1 };
+  agent = { fromServiceId: null as number|null, toServiceId: null as number|null, type: AGENTS_SPECIALISES[0], count: 1 };
 
-  staff = {
-    hospitalId: null as number | null,
-    services: [] as Service[],
-    fromId: null as number | null,
-    toId: null as number | null,
-    count: 1,
-  };
-  staffSubmitting = signal(false);
+  ngOnInit()               { this.applyDefault(); }
+  ngOnChanges(c: SimpleChanges) { if (c['defaultHospitalId']) this.applyDefault(); }
 
-  spec = {
-    fromHospitalId: null as number | null,
-    toHospitalId: null as number | null,
-    specialty: SPECIALTIES[0],
-    count: 1,
-  };
-  specialistActions = signal<SpecialistAction[]>([]);
-
-  ngOnInit() { this.applyDefaults(); }
-  ngOnChanges(c: SimpleChanges) {
-    if (c['defaultHospitalId']) this.applyDefaults();
-  }
-
-  private applyDefaults() {
-    const id = this.defaultHospitalId;
-    if (id == null) return;
-    if (this.eq.fromHospitalId == null) { this.eq.fromHospitalId = id; this.onEqFromHospital(id); }
-    if (this.staff.hospitalId == null) { this.staff.hospitalId = id; this.onStaffHospital(id); }
-    if (this.spec.fromHospitalId == null) this.spec.fromHospitalId = id;
-  }
-
-  // ===== Equipment =====
-  onEqFromHospital(id: number | null) {
-    this.eq.fromServiceId = null;
-    this.eq.equipmentId = null;
-    this.eq.sourceEquipment = [];
-    this.eq.fromServices = [];
-    if (this.eqMode() === 'same-hospital') {
-      this.eq.toHospitalId = id;
-      this.eq.toServiceId = null;
-      this.eq.toServices = [];
-    }
-    if (id != null) {
-      this.api.listServices(id).subscribe({
-        next: (s) => {
-          this.eq.fromServices = s;
-          if (this.eqMode() === 'same-hospital') this.eq.toServices = s;
-        },
-        error: () => {},
-      });
+  private applyDefault() {
+    if (this.defaultHospitalId != null && this.selectedHospitalId == null) {
+      this.selectedHospitalId = this.defaultHospitalId;
+      this.loadServices(this.defaultHospitalId);
     }
   }
-  onEqToHospital(id: number | null) {
-    this.eq.toServiceId = null;
-    this.eq.toServices = [];
-    if (id != null) {
-      this.api.listServices(id).subscribe({ next: (s) => this.eq.toServices = s, error: () => {} });
-    }
+
+  onHospitalChange(id: number | null) {
+    this.selectedHospitalId = id;
+    this.services = [];
+    this.resetForms();
+    if (id != null) this.loadServices(id);
   }
+
+  private loadServices(id: number) {
+    this.api.listServices(id).subscribe({ next: s => this.services = s, error: () => {} });
+  }
+
+  private resetForms() {
+    this.eq    = { fromServiceId: null, toServiceId: null, sourceEquipment: [], targetEquipment: [], equipmentId: null, quantity: 1, loadingEquipment: false, isNewInTarget: false, isNewInTargetChef: false };
+    this.staff = { fromServiceId: null, toServiceId: null, count: 1 };
+    this.agent = { fromServiceId: null, toServiceId: null, type: AGENTS_SPECIALISES[0], count: 1 };
+  }
+
+  servicesFiltered(excludeId: number | null): Service[] {
+    return this.services.filter(s => s.id !== excludeId);
+  }
+
+  // ✅ CORRECTION PRINCIPALE : charger depuis la BDD via GET /services/{id}/equipments
   onEqFromService(id: number | null) {
-    const svc = this.eq.fromServices.find(s => s.id === id);
-    this.eq.sourceEquipment = svc?.equipment ?? [];
-    this.eq.equipmentId = null;
+    this.eq.sourceEquipment = [];
+    this.eq.equipmentId     = null;
+    this.eq.toServiceId     = null;
+    this.eq.isNewInTarget   = false;
+    if (!id) return;
+
+    this.eq.loadingEquipment = true;
+    this.http.get<any[]>(`${BASE}/services/${id}/equipments`).subscribe({
+      next: (list) => {
+        // Normaliser : la table service_equipments utilise 'quantite'/'statut' (français)
+        // mais on accepte aussi 'quantity'/'status' (anglais) pour compatibilité
+        this.eq.sourceEquipment = list.map(e => ({
+          ...e,
+          quantity: e.quantity ?? e.quantite ?? 0,
+          status:   e.status  ?? e.statut   ?? 'operationnel',
+        })).filter(e =>
+          !e.statut || e.statut === 'operationnel' ||
+          !e.status || e.status === 'operational'  || e.status === 'operationnel'
+        );
+        this.eq.loadingEquipment = false;
+      },
+      error: () => {
+        // Fallback sur les données déjà chargées dans l'objet service
+        const svc = this.services.find(s => s.id === id);
+        const raw = svc?.equipment ?? [];
+        this.eq.sourceEquipment = raw.map((e: any) => ({
+          ...e,
+          quantity: e.quantity ?? e.quantite ?? 0,
+          status:   e.status  ?? e.statut   ?? 'operationnel',
+        }));
+        this.eq.loadingEquipment = false;
+      }
+    });
   }
-  effectiveEqToHospitalId(): number | null {
-    return this.eqMode() === 'same-hospital' ? this.eq.fromHospitalId : this.eq.toHospitalId;
+
+  // ✅ NOUVEAU : charger équipements du service cible pour détecter si l'équipement y existe
+  onEqToService(toId: number | null) {
+    this.eq.targetEquipment = [];
+    this.eq.isNewInTarget   = false;
+    if (!toId) return;
+
+    this.http.get<any[]>(`${BASE}/services/${toId}/equipments`).subscribe({
+      next:  (list) => { this.eq.targetEquipment = list; this.checkIsNewInTarget(); },
+      error: () => {
+        const svc = this.services.find(s => s.id === toId);
+        this.eq.targetEquipment = svc?.equipment ?? [];
+        this.checkIsNewInTarget();
+      }
+    });
   }
-  eqToServicesFiltered(): Service[] {
-    return this.eq.toServices.filter(s => s.id !== this.eq.fromServiceId);
+
+  // ✅ NOUVEAU : détecter si l'équipement sélectionné est absent dans la cible
+  onEqSelected(id: number | null) {
+    if (!id) { this.eq.isNewInTarget = false; return; }
+    this.checkIsNewInTarget();
   }
-  setEqMode(mode: 'same-hospital' | 'cross-hospital') {
-    if (this.eqMode() === mode) return;
-    this.eqMode.set(mode);
-    // Reset target-side state when switching modes to avoid stale selections.
-    this.eq.toHospitalId = mode === 'same-hospital' ? this.eq.fromHospitalId : null;
-    this.eq.toServiceId = null;
-    this.eq.toServices = mode === 'same-hospital' ? this.eq.fromServices : [];
+
+  // Pour chef de service : charger équipements de son propre service
+  onEqSelectedChef(id: number | null) {
+    if (!id || !this.userServiceId) { this.eq.isNewInTargetChef = false; return; }
+    const sel = this.eq.sourceEquipment.find(e => e.id === id);
+    if (!sel) { this.eq.isNewInTargetChef = false; return; }
+
+    this.http.get<any[]>(`${BASE}/services/${this.userServiceId}/equipments`).subscribe({
+      next: (list) => {
+        const exists = list.some(e =>
+          (e.name ?? '').toLowerCase().trim() === (sel.name ?? '').toLowerCase().trim()
+        );
+        this.eq.isNewInTargetChef = !exists;
+      },
+      error: () => { this.eq.isNewInTargetChef = false; }
+    });
+  }
+
+  private checkIsNewInTarget() {
+    if (!this.eq.equipmentId || !this.eq.toServiceId) { this.eq.isNewInTarget = false; return; }
+    const sel = this.eq.sourceEquipment.find(e => e.id === this.eq.equipmentId);
+    if (!sel) { this.eq.isNewInTarget = false; return; }
+    const exists = this.eq.targetEquipment.some(e =>
+      (e.name ?? '').toLowerCase().trim() === (sel.name ?? '').toLowerCase().trim()
+    );
+    this.eq.isNewInTarget = !exists;
   }
 
   submitEqTransfer() {
     const x = this.eq;
-    if (x.fromHospitalId == null) {
-      this.toasts.show({ title: 'Structure requise', description: 'Sélectionnez la structure source.', variant: 'destructive' });
-      return;
+    if (!x.fromServiceId || !x.toServiceId || !x.equipmentId) {
+      this.toasts.show({ title: 'Champs requis', description: 'Remplissez tous les champs.', variant: 'destructive' }); return;
     }
-    if (this.eqMode() === 'cross-hospital') {
-      if (x.toHospitalId == null) {
-        this.toasts.show({ title: 'Structure cible requise', description: 'Sélectionnez la structure cible.', variant: 'destructive' });
-        return;
-      }
-      if (x.fromHospitalId === x.toHospitalId) {
-        this.toasts.show({ title: 'Cible invalide', description: 'La structure cible doit être différente de la source.', variant: 'destructive' });
-        return;
-      }
+    const sel     = x.sourceEquipment.find(e => e.id === x.equipmentId);
+    const fromSvc = this.services.find(s => s.id === x.fromServiceId);
+    const toSvc   = this.services.find(s => s.id === x.toServiceId);
+
+    // ✅ VALIDATION : vérifier le stock disponible
+    const stockDispo = sel?.quantity ?? sel?.quantite ?? 0;
+    if (x.quantity < 1) {
+      this.toasts.show({ title: 'Quantité invalide', description: 'La quantité doit être ≥ 1.', variant: 'destructive' }); return;
     }
-    if (x.fromServiceId == null || x.toServiceId == null || x.equipmentId == null) {
-      this.toasts.show({ title: 'Champs requis', description: 'Service source, service cible et équipement requis.', variant: 'destructive' });
-      return;
+    if (x.quantity > stockDispo) {
+      this.toasts.show({
+        title: 'Stock insuffisant',
+        description: `${fromSvc?.name} n'a que ${stockDispo} × ${sel?.name ?? 'équipement'}. Vous avez saisi ${x.quantity}.`,
+        variant: 'destructive'
+      }); return;
     }
-    if (x.fromServiceId === x.toServiceId) {
-      this.toasts.show({ title: 'Cible invalide', description: 'Le service cible doit être différent du service source.', variant: 'destructive' });
-      return;
-    }
-    const sel = x.sourceEquipment.find(e => e.id === x.equipmentId);
-    const max = sel?.quantity ?? 1;
-    if (x.quantity < 1 || x.quantity > max) {
-      this.toasts.show({ title: 'Quantité invalide', description: `Entre 1 et ${max}.`, variant: 'destructive' });
-      return;
-    }
-    this.eqSubmitting.set(true);
-    this.api.transferEquipment(x.fromServiceId, { targetServiceId: x.toServiceId, equipmentId: x.equipmentId, quantity: x.quantity }).subscribe({
-      next: () => {
-        this.eqSubmitting.set(false);
-        this.toasts.show({ title: 'Transfert effectué', description: `${x.quantity} × ${sel?.name ?? 'équipement'} transféré(s).`, variant: 'success' });
-        this.onEqFromHospital(x.fromHospitalId);
-        x.equipmentId = null; x.quantity = 1;
-      },
-      error: () => {
-        this.eqSubmitting.set(false);
-        this.toasts.show({ title: 'Erreur', description: 'Le transfert a échoué.', variant: 'destructive' });
+
+    this.addTransfer({
+      type:           'equipment',
+      label:          `${x.quantity} × ${sel?.name} : ${fromSvc?.name} → ${toSvc?.name}`,
+      detail:         x.isNewInTarget
+        ? `Sera créé dans ${toSvc?.name} (taux d'utilisation 0% — à ajuster après application)`
+        : `Transfert d'équipement entre services`,
+      isNewEquipment: x.isNewInTarget,
+      data: {
+        fromServiceId:         x.fromServiceId,
+        toServiceId:           x.toServiceId,
+        equipmentId:           x.equipmentId,
+        equipmentName:         sel?.name,
+        equipmentType:         sel?.type ?? 'medical',
+        quantity:              x.quantity,
+        isNewInTarget:         x.isNewInTarget,
+        defaultUtilizationRate: x.isNewInTarget ? 0 : null,
       },
     });
+    this.toasts.show({ title: 'Transfert planifié', description: `${x.quantity} × ${sel?.name} planifié.`, variant: 'success' });
+    x.equipmentId = null; x.quantity = 1; x.isNewInTarget = false;
   }
 
-  // ===== Staff =====
-  onStaffHospital(id: number | null) {
-    this.staff.fromId = null;
-    this.staff.toId = null;
-    this.staff.services = [];
-    if (id != null) {
-      this.api.listServices(id).subscribe({ next: (s) => this.staff.services = s, error: () => {} });
+  submitEqTransferChef() {
+    const x = this.eq;
+    if (!x.fromServiceId || !x.equipmentId) {
+      this.toasts.show({ title: 'Champs requis', description: 'Sélectionnez un service et un équipement.', variant: 'destructive' }); return;
     }
+    const sel     = x.sourceEquipment.find(e => e.id === x.equipmentId);
+    const fromSvc = this.services.find(s => s.id === x.fromServiceId);
+
+    // ✅ VALIDATION : vérifier le stock disponible
+    const stockDispo = sel?.quantity ?? sel?.quantite ?? 0;
+    if (x.quantity < 1) {
+      this.toasts.show({ title: 'Quantité invalide', description: 'La quantité doit être ≥ 1.', variant: 'destructive' }); return;
+    }
+    if (x.quantity > stockDispo) {
+      this.toasts.show({
+        title: 'Stock insuffisant',
+        description: `${fromSvc?.name} n'a que ${stockDispo} × ${sel?.name ?? 'équipement'}. Vous avez saisi ${x.quantity}.`,
+        variant: 'destructive'
+      }); return;
+    }
+    const toSvc = this.services.find(s => s.id === this.userServiceId);
+    this.addTransfer({
+      type:           'equipment',
+      label:          `${x.quantity} × ${sel?.name} : ${fromSvc?.name} → ${toSvc?.name ?? 'Mon service'}`,
+      detail:         x.isNewInTargetChef
+        ? `Sera créé dans votre service (taux d'utilisation 0% — à ajuster après application)`
+        : `Demande depuis ${fromSvc?.name} vers votre service`,
+      isNewEquipment: x.isNewInTargetChef,
+      data: {
+        fromServiceId:         x.fromServiceId,
+        toServiceId:           this.userServiceId,
+        equipmentId:           x.equipmentId,
+        equipmentName:         sel?.name,
+        equipmentType:         sel?.type ?? 'medical',
+        quantity:              x.quantity,
+        isNewInTarget:         x.isNewInTargetChef,
+        defaultUtilizationRate: x.isNewInTargetChef ? 0 : null,
+      },
+    });
+    this.toasts.show({ title: 'Transfert planifié', description: `${x.quantity} × ${sel?.name} ajouté virtuellement.`, variant: 'success' });
+    x.equipmentId = null; x.quantity = 1; x.isNewInTargetChef = false;
   }
-  onStaffFromService(_id: number | null) { /* recompute via getter */ }
-  staffToServicesFiltered(): Service[] {
-    return this.staff.services.filter(s => s.id !== this.staff.fromId);
-  }
-  staffFromService(): Service | undefined {
-    return this.staff.services.find(s => s.id === this.staff.fromId);
-  }
-  submitStaffTransfer() {
+
+  submitStaffTransfer(type: string) {
     const x = this.staff;
-    const type = this.staffMode() as 'nurse' | 'doctor';
-    if (x.fromId == null || x.toId == null) {
-      this.toasts.show({ title: 'Champs requis', description: 'Service source et cible requis.', variant: 'destructive' });
-      return;
+    if (!x.fromServiceId || !x.toServiceId) {
+      this.toasts.show({ title: 'Champs requis', description: 'Service source et cible requis.', variant: 'destructive' }); return;
     }
-    if (x.fromId === x.toId) {
-      this.toasts.show({ title: 'Cible invalide', description: 'Choisissez deux services différents.', variant: 'destructive' });
-      return;
-    }
-    const fs = this.staffFromService();
-    const max = fs ? (type === 'nurse' ? fs.nurses : fs.doctors) : 0;
-    if (x.count < 1 || x.count > max) {
-      this.toasts.show({ title: 'Effectif invalide', description: `Entre 1 et ${max}.`, variant: 'destructive' });
-      return;
-    }
-    this.staffSubmitting.set(true);
-    this.api.transferStaff(x.fromId, { targetServiceId: x.toId, staffType: type, count: x.count }).subscribe({
-      next: () => {
-        this.staffSubmitting.set(false);
-        this.toasts.show({ title: 'Transfert effectué', description: `${x.count} ${type === 'nurse' ? 'infirmier(s)' : 'médecin(s)'} transféré(s).`, variant: 'success' });
-        this.onStaffHospital(x.hospitalId);
-        x.count = 1;
-      },
-      error: () => {
-        this.staffSubmitting.set(false);
-        this.toasts.show({ title: 'Erreur', description: 'Le transfert a échoué.', variant: 'destructive' });
-      },
+    const fromSvc = this.services.find(s => s.id === x.fromServiceId);
+    const toSvc   = this.services.find(s => s.id === x.toServiceId);
+    const label   = type === 'medecin' ? 'médecin(s)' : 'infirmier(s)';
+    this.addTransfer({
+      type: type as any,
+      label: `${x.count} ${label} : ${fromSvc?.name} → ${toSvc?.name}`,
+      detail: `Redistribution de ${label} entre services`,
+      data: { fromServiceId: x.fromServiceId, toServiceId: x.toServiceId, staffType: type, count: x.count },
     });
-  }
-
-  // ===== Specialist (frontend-only) =====
-  submitSpecialistTransfer() {
-    const x = this.spec;
-    if (x.fromHospitalId == null || x.toHospitalId == null) {
-      this.toasts.show({ title: 'Champs requis', description: 'Structure source et cible requis.', variant: 'destructive' });
-      return;
-    }
-    if (x.fromHospitalId === x.toHospitalId) {
-      this.toasts.show({ title: 'Cible invalide', description: 'Choisissez deux structures différentes.', variant: 'destructive' });
-      return;
-    }
-    if (x.count < 1) {
-      this.toasts.show({ title: 'Effectif invalide', description: 'Au moins 1 médecin requis.', variant: 'destructive' });
-      return;
-    }
-    const fromH = this.hospitals.find(h => h.id === x.fromHospitalId);
-    const toH = this.hospitals.find(h => h.id === x.toHospitalId);
-    if (!fromH || !toH) return;
-    const action: SpecialistAction = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      fromHospitalId: x.fromHospitalId,
-      fromHospitalName: fromH.name,
-      toHospitalId: x.toHospitalId,
-      toHospitalName: toH.name,
-      specialty: x.specialty,
-      count: x.count,
-    };
-    this.specialistActions.update(arr => [...arr, action]);
-    this.toasts.show({ title: 'Transfert planifié', description: `${x.count} ${x.specialty.toLowerCase()} de ${fromH.name} → ${toH.name}.`, variant: 'success' });
+    this.toasts.show({ title: 'Transfert planifié', description: `${x.count} ${label} planifié(s).`, variant: 'success' });
     x.count = 1;
   }
-  removeSpecialistAction(id: string) {
-    this.specialistActions.update(arr => arr.filter(a => a.id !== id));
+
+  submitAgentTransfer() {
+    const x = this.agent;
+    if (!x.fromServiceId || !x.toServiceId) {
+      this.toasts.show({ title: 'Champs requis', description: 'Service source et cible requis.', variant: 'destructive' }); return;
+    }
+    const fromSvc = this.services.find(s => s.id === x.fromServiceId);
+    const toSvc   = this.services.find(s => s.id === x.toServiceId);
+    this.addTransfer({
+      type: 'agent',
+      label: `${x.count} ${x.type} : ${fromSvc?.name} → ${toSvc?.name}`,
+      detail: `Transfert d'agent spécialisé`,
+      data: { fromServiceId: x.fromServiceId, toServiceId: x.toServiceId, agentType: x.type, count: x.count },
+    });
+    this.toasts.show({ title: 'Transfert planifié', description: `${x.count} ${x.type} planifié(s).`, variant: 'success' });
+    x.count = 1;
+  }
+
+  submitStaffTransferChef(type: string) {
+    const x = this.staff;
+    if (!x.fromServiceId) {
+      this.toasts.show({ title: 'Champs requis', description: 'Sélectionnez un service source.', variant: 'destructive' }); return;
+    }
+    const fromSvc = this.services.find(s => s.id === x.fromServiceId);
+    const toSvc   = this.services.find(s => s.id === this.userServiceId);
+    const label   = type === 'medecin' ? 'médecin(s)' : 'infirmier(s)';
+    this.addTransfer({
+      type: type as any,
+      label: `${x.count} ${label} : ${fromSvc?.name} → ${toSvc?.name ?? 'Mon service'}`,
+      detail: `Demande depuis ${fromSvc?.name} vers votre service`,
+      data: { fromServiceId: x.fromServiceId, toServiceId: this.userServiceId, staffType: type, count: x.count },
+    });
+    this.toasts.show({ title: 'Transfert planifié', description: `${x.count} ${label} ajouté(s) virtuellement à votre service.`, variant: 'success' });
+    x.count = 1;
+  }
+
+  private addTransfer(action: Omit<TransferAction, 'id'>) {
+    const id = `trf_${Date.now()}`;
+    const transfer: TransferAction = { ...action, id };
+    this.transfers.update(arr => [...arr, transfer]);
+    this.transferPlanified.emit(transfer);
+    this.rootTab.set('journal');
+  }
+
+  removeTransfer(id: string) { this.transfers.update(arr => arr.filter(t => t.id !== id)); }
+
+  clearAll() {
+    if (!confirm('Annuler tous les transferts ?')) return;
+    this.transfers.set([]);
+    this.toasts.show({ title: 'Journal vidé', description: 'Tous les transferts annulés.', variant: 'default' });
+  }
+
+  hasNewEquipment(): boolean { return this.transfers().some(t => t.isNewEquipment); }
+
+  transferColor(type: string): string {
+    if (type === 'equipment') return PRIMARY;
+    if (type === 'medecin')   return '#E53935';
+    if (type === 'infirmier') return '#43A047';
+    return '#FB8C00';
+  }
+  transferIcon(type: string): string {
+    if (type === 'equipment') return 'settings';
+    if (type === 'medecin')   return 'stethoscope';
+    if (type === 'infirmier') return 'heart-pulse';
+    return 'users';
+  }
+  transferTypeLabel(type: string): string {
+    if (type === 'equipment') return 'Équipement';
+    if (type === 'medecin')   return 'Médecin';
+    if (type === 'infirmier') return 'Infirmier';
+    return 'Agent spécialisé';
   }
 }

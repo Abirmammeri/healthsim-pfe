@@ -1,178 +1,181 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { ApiService } from '../../shared/api.service';
 import { Hospital, Service } from '../../shared/models';
 
+const PRIMARY = '#00BCD4'; const PRIMARY_DARK = '#0288D1';
+const GREEN = '#43A047'; const ORANGE = '#FB8C00'; const RED = '#E53935';
+
 @Component({
   selector: 'app-services',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule],
+  imports: [CommonModule, RouterLink, LucideAngularModule],
   template: `
-    <div class="flex flex-col h-full">
-      <div class="px-8 py-6 bg-card border-b">
-        <div class="flex items-center gap-4 mb-1">
-          <button (click)="back()" class="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-sm transition-colors" data-testid="btn-back-to-dashboard">
-            <lucide-icon name="arrow-left" class="w-4 h-4"></lucide-icon>
-            Tableau de bord
-          </button>
-          <span class="text-muted-foreground">/</span>
-          <span class="text-sm text-foreground font-medium">{{ hospital()?.name }}</span>
-          <span class="text-muted-foreground">/</span>
-          <span class="text-sm text-foreground font-medium">Services</span>
-        </div>
-        <div class="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 class="text-2xl font-bold text-foreground font-display">Services — Vue d'ensemble</h1>
-            <div class="text-xs text-muted-foreground mt-1">
-              Cette page est en lecture seule. L'ajout de service et toutes les modifications (équipement, transferts) se font dans le Centre de Simulation.
+<div class="flex flex-col h-full bg-background">
+
+  <!-- HEADER -->
+  <div class="px-6 py-4 bg-card border-b flex items-center justify-between gap-4 flex-wrap">
+    <div class="flex items-center gap-3">
+      <a [routerLink]="['/hospitals', hospitalId]" class="w-9 h-9 rounded-xl border border-border bg-card hover:bg-muted flex items-center justify-center transition-colors">
+        <lucide-icon name="arrow-left" class="w-4 h-4 text-foreground"></lucide-icon>
+      </a>
+      <div>
+        <h1 class="text-lg font-bold text-foreground">{{ hospital()?.name }} — Services</h1>
+        <p class="text-xs text-muted-foreground">Cliquer sur un service pour voir ses KPIs détaillés</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <span *ngIf="countByStatus('critical')>0" class="text-[10px] font-bold px-2 py-1 rounded-full" style="background:#E5393518;color:#E53935">
+        {{ countByStatus('critical') }} critique{{ countByStatus('critical')>1?'s':'' }}
+      </span>
+      <span *ngIf="countByStatus('medium')+countByStatus('high')>0" class="text-[10px] font-bold px-2 py-1 rounded-full" style="background:#FB8C0018;color:#FB8C00">
+        {{ countByStatus('medium')+countByStatus('high') }} attention
+      </span>
+      <span *ngIf="countByStatus('normal')>0" class="text-[10px] font-bold px-2 py-1 rounded-full" style="background:#43A04718;color:#43A047">
+        {{ countByStatus('normal') }} normal{{ countByStatus('normal')>1?'s':'' }}
+      </span>
+    </div>
+  </div>
+
+  <div class="flex-1 overflow-y-auto p-5">
+  <div *ngIf="loading()" class="flex items-center justify-center h-40 text-sm text-muted-foreground">Chargement…</div>
+
+  <div *ngIf="!loading()" class="max-w-5xl mx-auto space-y-5">
+
+    <!-- TITRE SECTION -->
+    <div class="flex items-center gap-2 px-1">
+      <span class="w-1.5 h-4 rounded-full" [style.backgroundColor]="PRIMARY"></span>
+      <span class="text-xs font-bold text-foreground uppercase tracking-wider">Services de l'établissement</span>
+      <span class="text-xs text-muted-foreground ml-1">— {{ services().length }} service{{ services().length>1?'s':'' }}</span>
+    </div>
+
+    <!-- GRILLE DES SERVICES -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div *ngFor="let svc of services()"
+           (click)="goService(svc.id)"
+           class="bg-card rounded-2xl border shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-0.5 transition-all overflow-hidden"
+           [style.borderColor]="statusColor(svc.status)+'50'">
+
+        <!-- Bande couleur statut en haut -->
+        <div class="h-1.5 w-full" [style.backgroundColor]="statusColor(svc.status)"></div>
+
+        <div class="p-5">
+          <!-- Ligne 1 : Nom + Badge statut -->
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <h3 class="text-base font-bold text-foreground">{{ svc.name }}</h3>
+              <div class="flex items-center gap-1.5 mt-0.5">
+                <lucide-icon name="user" class="w-3 h-3 text-muted-foreground"></lucide-icon>
+                <span class="text-xs text-muted-foreground">Dr. {{ svc.head }}</span>
+              </div>
+            </div>
+            <span class="text-[10px] font-bold px-2.5 py-1 rounded-full flex-shrink-0 ml-2"
+                  [style.backgroundColor]="statusColor(svc.status)+'18'"
+                  [style.color]="statusColor(svc.status)">
+              {{ statusLabel(svc.status) }}
+            </span>
+          </div>
+
+          <!-- Ligne 2 : 4 métriques clés -->
+          <div class="grid grid-cols-4 gap-2 mb-4">
+            <div class="bg-muted/40 rounded-xl p-2.5 text-center">
+              <lucide-icon name="stethoscope" class="w-3.5 h-3.5 text-muted-foreground mx-auto mb-1"></lucide-icon>
+              <div class="text-base font-bold text-foreground">{{ svc.doctors }}</div>
+              <div class="text-[9px] text-muted-foreground">Médecins</div>
+            </div>
+            <div class="bg-muted/40 rounded-xl p-2.5 text-center">
+              <lucide-icon name="users" class="w-3.5 h-3.5 text-muted-foreground mx-auto mb-1"></lucide-icon>
+              <div class="text-base font-bold text-foreground">{{ svc.nurses }}</div>
+              <div class="text-[9px] text-muted-foreground">Infirmiers</div>
+            </div>
+            <div class="bg-muted/40 rounded-xl p-2.5 text-center">
+              <lucide-icon name="heart-pulse" class="w-3.5 h-3.5 text-muted-foreground mx-auto mb-1"></lucide-icon>
+              <div class="text-base font-bold text-foreground">{{ svc.patients }}</div>
+              <div class="text-[9px] text-muted-foreground">Patients</div>
+            </div>
+            <!-- CORRECTION : lits libres = beds - patients -->
+            <div class="bg-muted/40 rounded-xl p-2.5 text-center">
+              <lucide-icon name="bed" class="w-3.5 h-3.5 text-muted-foreground mx-auto mb-1"></lucide-icon>
+              <div class="text-base font-bold"
+                   [style.color]="((svc.beds - svc.patients) <= 2) ? RED : GREEN">
+                {{ (svc.beds - svc.patients) > 0 ? (svc.beds - svc.patients) : 0 }}
+              </div>
+              <div class="text-[9px] text-muted-foreground">Lits lib.</div>
             </div>
           </div>
-          <button (click)="goSim()" class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
-                  style="background: linear-gradient(135deg, #00BCD4, #0288D1);" data-testid="btn-go-to-simulation">
-            <lucide-icon name="brain" class="w-4 h-4"></lucide-icon>
-            Centre de Simulation
-          </button>
-        </div>
-      </div>
 
-      <div class="flex-1 overflow-y-auto p-8">
-        <div *ngIf="loading()" class="flex items-center justify-center h-40">
-          <div class="text-muted-foreground">Chargement des services...</div>
-        </div>
-
-        <div *ngIf="!loading() && services().length === 0" class="flex flex-col items-center justify-center h-40 text-center">
-          <div class="text-muted-foreground mb-2">Aucun service enregistré</div>
-        </div>
-
-        <div *ngIf="!loading() && services().length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div *ngFor="let svc of services()" [attr.data-testid]="'service-card-' + svc.id"
-               class="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
-            <div class="p-5">
-              <div class="flex items-start justify-between mb-3">
-                <div class="flex items-center gap-3">
-                  <div class="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1" [style.backgroundColor]="statusColor(svc.status)"></div>
-                  <div>
-                    <div class="font-semibold text-foreground">{{ svc.name }}</div>
-                    <div class="text-xs text-muted-foreground">Chef : Dr. {{ svc.head }}</div>
-                  </div>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-semibold px-2 py-0.5 rounded-full"
-                        [style.backgroundColor]="statusColor(svc.status) + '15'" [style.color]="statusColor(svc.status)">
-                    {{ statusLabel(svc.status) }}
-                  </span>
-                  <button (click)="toggle(svc.id)" class="p-1 hover:bg-muted rounded"
-                          [attr.data-testid]="'btn-expand-service-' + svc.id" aria-label="Développer">
-                    <lucide-icon [name]="expanded[svc.id] ? 'chevron-down' : 'chevron-right'" class="w-4 h-4 text-muted-foreground"></lucide-icon>
-                  </button>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-5 gap-3 mb-3">
-                <div class="bg-muted/50 rounded-xl p-2.5 text-center">
-                  <div class="text-sm font-bold text-foreground">{{ svc.doctors }}</div>
-                  <div class="text-xs text-muted-foreground">Médecins</div>
-                </div>
-                <div class="bg-muted/50 rounded-xl p-2.5 text-center">
-                  <div class="text-sm font-bold text-foreground">{{ svc.nurses }}</div>
-                  <div class="text-xs text-muted-foreground">Infirmiers</div>
-                </div>
-                <div class="bg-muted/50 rounded-xl p-2.5 text-center">
-                  <div class="text-sm font-bold text-foreground">{{ svc.availableBeds }}/{{ svc.beds }}</div>
-                  <div class="text-xs text-muted-foreground">Lits</div>
-                </div>
-                <div class="bg-muted/50 rounded-xl p-2.5 text-center">
-                  <div class="text-sm font-bold text-foreground">{{ svc.patients }}</div>
-                  <div class="text-xs text-muted-foreground">Patients</div>
-                </div>
-                <div class="bg-muted/50 rounded-xl p-2.5 text-center">
-                  <div class="text-sm font-bold text-foreground">{{ totalEquip(svc) }}</div>
-                  <div class="text-xs text-muted-foreground">Équipements</div>
-                </div>
-              </div>
-
-              <div>
-                <div class="h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div class="h-full rounded-full" [style.width.%]="loadPct(svc)" [style.backgroundColor]="statusColor(svc.status)"></div>
-                </div>
-                <div class="text-xs text-muted-foreground mt-1">Occupation des lits : {{ loadPct(svc) }}%</div>
-              </div>
+          <!-- Ligne 3 : Barre occupation -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] text-muted-foreground">Occupation des lits</span>
+              <span class="text-[10px] font-bold" [style.color]="statusColor(svc.status)">{{ loadPct(svc) }}%</span>
             </div>
-
-            <div *ngIf="expanded[svc.id]" class="border-t border-border p-5">
-              <div class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Équipements</div>
-              <div *ngIf="(svc.equipment || []).length === 0" class="text-center text-sm text-muted-foreground py-3">
-                Aucun équipement enregistré
-              </div>
-              <div *ngIf="(svc.equipment || []).length > 0" class="space-y-2">
-                <div *ngFor="let eq of svc.equipment" [attr.data-testid]="'equipment-row-' + eq.id"
-                     class="flex items-center justify-between p-2.5 bg-muted/30 rounded-lg">
-                  <div class="flex items-center gap-2">
-                    <div class="w-2 h-2 rounded-full" [style.backgroundColor]="eqColor(eq.status)"></div>
-                    <div>
-                      <div class="text-sm font-medium text-foreground">{{ eq.name }}</div>
-                      <div class="text-xs text-muted-foreground">{{ eq.type }}</div>
-                    </div>
-                  </div>
-                  <div class="text-right">
-                    <div class="text-sm font-semibold text-foreground">×{{ eq.quantity }}</div>
-                    <div class="text-xs" [style.color]="eqColor(eq.status)">{{ eqLabel(eq.status) }}</div>
-                  </div>
-                </div>
-              </div>
+            <div class="h-2.5 rounded-full bg-muted overflow-hidden">
+              <div class="h-full rounded-full transition-all" [style.backgroundColor]="statusColor(svc.status)" [style.width.%]="loadPct(svc)"></div>
             </div>
+            <div class="flex justify-between text-[9px] text-muted-foreground mt-1">
+              <span>{{ svc.patients }} / {{ svc.beds }} lits</span>
+              <span class="font-semibold" [style.color]="statusColor(svc.status)">{{ loadPct(svc)>=85?'Saturation':loadPct(svc)>=70?'Attention':'Normal' }}</span>
+            </div>
+          </div>
+
+          <!-- Ligne 4 : Voir détails -->
+          <div class="mt-3 pt-3 border-t border-border/60 flex items-center justify-between">
+            <span class="text-[11px] text-muted-foreground">{{ svc.equipment?.length ?? 0 }} équipements enregistrés</span>
+            <span class="flex items-center gap-1 text-xs font-semibold" [style.color]="PRIMARY">
+              Voir KPIs détaillés <lucide-icon name="chevron-right" class="w-3.5 h-3.5"></lucide-icon>
+            </span>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- BOUTON SIMULATION HÔPITAL -->
+    <div class="rounded-2xl border border-border bg-card p-5 flex items-center justify-between gap-4 mt-2">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <lucide-icon name="check-circle" class="w-4 h-4" [style.color]="PRIMARY"></lucide-icon>
+          <span class="text-sm font-bold text-foreground">Centre de Simulation — Hôpital complet</span>
+        </div>
+        <div class="text-xs text-muted-foreground">Réservé au directeur d'hôpital · Simulation sur tous les services</div>
+      </div>
+      <button (click)="goSimHospital()" class="px-5 py-2.5 rounded-xl text-white font-semibold text-sm flex items-center gap-2 shadow-md flex-shrink-0" style="background:linear-gradient(135deg,#00BCD4,#0288D1)">
+        <lucide-icon name="brain" class="w-4 h-4"></lucide-icon>Simuler l'hôpital
+      </button>
+    </div>
+
+  </div>
+  </div>
+</div>
   `,
 })
 export class ServicesComponent implements OnInit {
-  private api = inject(ApiService);
-  private route = inject(ActivatedRoute);
+  private api    = inject(ApiService);
+  private route  = inject(ActivatedRoute);
   private router = inject(Router);
 
   hospitalId = 0;
-  hospital = signal<Hospital | null>(null);
-  services = signal<Service[]>([]);
-  loading = signal(true);
-  expanded: Record<number, boolean> = {};
+  hospital   = signal<Hospital | null>(null);
+  services   = signal<Service[]>([]);
+  loading    = signal(true);
 
   ngOnInit() {
     this.hospitalId = parseInt(this.route.snapshot.paramMap.get('id') ?? '0', 10);
     this.api.getHospital(this.hospitalId).subscribe({ next: h => this.hospital.set(h), error: () => {} });
     this.api.listServices(this.hospitalId).subscribe({
-      next: (s) => { this.services.set(s); this.loading.set(false); },
+      next: s => { this.services.set(s); this.loading.set(false); },
       error: () => this.loading.set(false),
     });
   }
 
-  back() { this.router.navigate(['/hospitals', this.hospitalId]); }
-  goSim() { this.router.navigate(['/simulation']); }
-  toggle(id: number) { this.expanded[id] = !this.expanded[id]; }
+  goService(svcId: number) { this.router.navigate(['/hospitals', this.hospitalId, 'services', svcId]); }
+  goSimHospital() { this.router.navigate(['/simulation']); }
 
-  statusColor(s: string): string {
-    if (s === 'critical') return '#E53935';
-    if (s === 'medium' || s === 'high') return '#FB8C00';
-    return '#43A047';
-  }
-  statusLabel(s: string): string {
-    if (s === 'critical') return 'Critique';
-    if (s === 'medium' || s === 'high') return 'Moyenne';
-    return 'Normale';
-  }
-  totalEquip(svc: Service): number {
-    return (svc.equipment || []).reduce((q, e) => q + (e.quantity ?? 0), 0);
-  }
-  loadPct(svc: Service): number {
-    return svc.beds > 0 ? Math.round((svc.patients / svc.beds) * 100) : 0;
-  }
-  eqColor(s: string): string {
-    return s === 'operational' ? '#43A047' : s === 'maintenance' ? '#FB8C00' : '#E53935';
-  }
-  eqLabel(s: string): string {
-    return s === 'operational' ? 'opérationnel' : s === 'maintenance' ? 'maintenance' : 'hors service';
-  }
+  readonly PRIMARY = PRIMARY; readonly RED = RED; readonly GREEN = GREEN;
+  countByStatus(s: string): number { return this.services().filter(x => x.status === s).length; }
+  loadPct(svc: Service): number { return svc.beds > 0 ? Math.round((svc.patients / svc.beds) * 100) : 0; }
+  statusColor(s: string): string { return s==='critical'?RED:s==='medium'||s==='high'?ORANGE:GREEN; }
+  statusLabel(s: string): string { return s==='critical'?'Critique':s==='medium'||s==='high'?'Attention':'Normal'; }
 }

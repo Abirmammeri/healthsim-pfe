@@ -1,6 +1,8 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterOutlet } from '@angular/router';
+import { RouterOutlet, Router, NavigationEnd } from '@angular/router';
+import { filter, map } from 'rxjs/operators';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { SidebarComponent } from './shared/layout/sidebar.component';
 import { ToastService } from './shared/toast.service';
 
@@ -10,8 +12,8 @@ import { ToastService } from './shared/toast.service';
   imports: [CommonModule, RouterOutlet, SidebarComponent],
   template: `
     <div class="flex h-screen overflow-hidden bg-background">
-      <app-sidebar></app-sidebar>
-      <main class="flex-1 overflow-y-auto">
+      <app-sidebar *ngIf="!isLoginPage()"></app-sidebar>
+      <main class="flex-1 overflow-y-auto h-full min-h-0">
         <router-outlet></router-outlet>
       </main>
     </div>
@@ -30,4 +32,15 @@ import { ToastService } from './shared/toast.service';
 })
 export class AppComponent {
   toasts = inject(ToastService);
+  private router = inject(Router);
+
+  private currentUrl = toSignal(
+    this.router.events.pipe(
+      filter(e => e instanceof NavigationEnd),
+      map(e => (e as NavigationEnd).urlAfterRedirects)
+    ),
+    { initialValue: this.router.url }
+  );
+
+  isLoginPage = computed(() => this.currentUrl().startsWith('/login'));
 }

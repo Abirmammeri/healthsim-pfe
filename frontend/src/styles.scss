@@ -40,6 +40,18 @@ body {
 
 h1, h2, h3, h4, h5, h6 { font-family: 'DM Sans', sans-serif; }
 
+/* Tous les composants routés doivent remplir main verticalement */
+app-map,
+app-simulation,
+app-simulation-result,
+app-hospital-dashboard,
+app-services,
+app-alerts,
+app-profile {
+  display: block;
+  height: 100%;
+}
+
 .leaflet-container { font-family: 'Inter', sans-serif; z-index: 0; }
 
 input[type='range'].slider-input,

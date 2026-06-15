@@ -56,6 +56,30 @@ class HospitalService
         'equipmentStatus' => $equipmentStatus,
     ];
 }
+    public function applyScenario($id, array $data)
+    {
+        $hospital = Hospital::findOrFail($id);
+
+        $hospital->total_doctors = $data['doctors'];
+        $hospital->total_nurses  = $data['nurses'];
+        $hospital->total_beds    = $data['beds'];
+        $hospital->available_beds = max(0, $data['beds'] - $hospital->active_patients);
+
+        $occupancyRate = $hospital->total_beds > 0
+            ? ($hospital->active_patients / $hospital->total_beds)
+            : 0;
+
+        $hospital->status = match (true) {
+            $occupancyRate >= 0.85 => 'critique',
+            $occupancyRate >= 0.70 => 'charge_elevee',
+            default                => 'normal',
+        };
+
+        $hospital->save();
+
+        return $hospital;
+    }
+
   public function getSummary()
 {
     return [
