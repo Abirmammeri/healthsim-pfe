@@ -15,7 +15,8 @@ const PRIMARY_DARK = '#0288D1';
 const GREEN        = '#43A047';
 const ORANGE       = '#FB8C00';
 const RED          = '#E53935';
-const FLASK        = 'http://localhost:5000';
+import { environment } from '../../../environments/environment';
+const FLASK        = environment.simUrl;
 
 type ApplyStatus = 'idle' | 'confirming' | 'loading' | 'success' | 'error';
 type KpiCategory = 'SSI' | 'IIP' | 'ESI' | 'TI' | null;

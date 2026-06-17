@@ -6,7 +6,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { HttpClient } from '@angular/common/http';
 import { AuthService } from '../../shared/auth.service';
 
-const BASE = 'http://localhost:8000/api';
+import { environment } from '../../../environments/environment';
+const BASE = environment.apiUrl;
 const PRIMARY = '#00BCD4';
 
 @Component({

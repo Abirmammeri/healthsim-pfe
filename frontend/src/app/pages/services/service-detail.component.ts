@@ -1,14 +1,16 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { HttpClient } from '@angular/common/http';
+import { forkJoin } from 'rxjs';
 import { ApiService } from '../../shared/api.service';
 import { AuthService } from '../../shared/auth.service';
 import { Service } from '../../shared/models';
 
-const BASE = 'http://localhost:8000/api';
+import { environment } from '../../../environments/environment';
+const BASE = environment.apiUrl;
 const PRIMARY = '#00BCD4'; const PRIMARY_DARK = '#0288D1';
 const GREEN = '#43A047'; const ORANGE = '#FB8C00'; const RED = '#E53935';
 const PURPLE = '#9C27B0';
@@ -17,6 +19,7 @@ const PURPLE = '#9C27B0';
   selector: 'app-service-detail',
   standalone: true,
   imports: [CommonModule, FormsModule, LucideAngularModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
 <div class="flex flex-col h-full bg-background">
 
@@ -383,24 +386,18 @@ export class ServiceDetailComponent implements OnInit {
     this.hospitalId = parseInt(this.route.snapshot.paramMap.get('id') ?? '0', 10);
     this.svcId      = parseInt(this.route.snapshot.paramMap.get('svcId') ?? '0', 10);
 
-    this.api.listServices(this.hospitalId).subscribe({
-      next: (list: Service[]) => {
-        const found = list.find(s => s.id === this.svcId) ?? null;
+    forkJoin({
+      services:   this.api.listServices(this.hospitalId),
+      kpis:       this.api.getServiceKpis(this.svcId),
+      equipments: this.api.getServiceEquipments(this.svcId),
+    }).subscribe({
+      next: ({ services, kpis, equipments }) => {
+        const found = services.find(s => s.id === this.svcId) ?? null;
         if (found) {
-          this.api.getServiceKpis(this.svcId).subscribe({
-            next: (kpiData: any) => {
-              this.service.set({ ...found, kpis: kpiData.kpis ?? kpiData } as any);
-              this.loading.set(false);
-            },
-            error: () => { this.service.set(found); this.loading.set(false); }
-          });
-          this.api.getServiceEquipments(this.svcId).subscribe({
-            next: (eqs: any[]) => { this.equipmentList.set(eqs); },
-            error: () => { this.equipmentList.set([]); }
-          });
-        } else {
-          this.loading.set(false);
+          this.service.set({ ...found, kpis: kpis.kpis ?? kpis } as any);
         }
+        this.equipmentList.set(equipments);
+        this.loading.set(false);
       },
       error: () => this.loading.set(false),
     });

@@ -7,6 +7,7 @@ import { HttpClient } from '@angular/common/http';
 import { ApiService } from '../api.service';
 import { AuthService } from '../auth.service';
 import { SummaryStats } from '../models';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-sidebar',
@@ -241,7 +242,7 @@ export class SidebarComponent implements OnInit {
   }
 
   private refreshUnread() {
-    this.http.get<{count:number}>('http://localhost:8000/api/messaging/unread')
+    this.http.get<{count:number}>(`${environment.apiUrl}/messaging/unread`)
       .subscribe({ next: r => this.unreadCount.set(r.count), error: () => {} });
   }
 

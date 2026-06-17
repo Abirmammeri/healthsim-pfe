@@ -56,7 +56,7 @@ class AuthController extends Controller
         if (!$user->face_embedding) return response()->json(['message' => 'Aucun visage enregistre pour ce compte.'], 422);
 
         try {
-            $response = Http::timeout(15)->post('http://localhost:5001/verify-face', [
+            $response = Http::timeout(15)->post(config('services.face.url') . '/verify-face', [
                 'image'     => $request->image,
                 'embedding' => $user->face_embedding,
             ]);
@@ -138,7 +138,7 @@ class AuthController extends Controller
             $bestDistance = 1.0;
 
             foreach ($users as $user) {
-                $response = Http::timeout(15)->post('http://localhost:5001/verify-face', [
+                $response = Http::timeout(15)->post(config('services.face.url') . '/verify-face', [
                     'image'     => $request->image,
                     'embedding' => $user->face_embedding,
                 ]);
@@ -189,7 +189,7 @@ class AuthController extends Controller
         $faceEmbedding = null;
         if ($request->face_image) {
             try {
-                $response = Http::timeout(15)->post('http://localhost:5001/extract-embedding', [
+                $response = Http::timeout(15)->post(config('services.face.url') . '/extract-embedding', [
                     'image' => $request->face_image,
                 ]);
                 $result = $response->json();
@@ -426,7 +426,7 @@ class AuthController extends Controller
         $user = $request->user();
 
         try {
-            $response = Http::timeout(30)->post('http://localhost:5001/extract-embedding', [
+            $response = Http::timeout(30)->post(config('services.face.url') . '/extract-embedding', [
                 'image' => $request->image,
             ]);
 
@@ -530,6 +530,46 @@ class AuthController extends Controller
         return response()->json(['message' => 'Compte supprime.']);
     }
 
+    // ── PATCH /api/auth/deactivate-account ───────────────────
+    public function deactivateAccount(Request $request)
+    {
+        $request->validate(['password' => 'required|string']);
+        $user = $request->user();
+
+        if (!Hash::check($request->password, $user->password)) {
+            return response()->json(['message' => 'Mot de passe incorrect.'], 401);
+        }
+
+        // On ne change pas status (ENUM MySQL) — on utilise uniquement is_active
+        $user->update(['is_active' => false]);
+        $user->tokens()->delete();
+
+        return response()->json(['message' => 'Compte desactive. Contactez un administrateur pour le reactiver.']);
+    }
+
+    // ── PATCH /api/auth/toggle-user-status/{id} (directeur) ──
+    public function toggleUserStatus(Request $request, $id)
+    {
+        $me = $request->user();
+        if ($me->role !== 'directeur') return response()->json(['message' => 'Acces refuse.'], 403);
+
+        $user = User::where('id', $id)->where('hospital_id', $me->hospital_id)->firstOrFail();
+        $newActive = !$user->is_active;
+
+        // On ne touche pas à status (ENUM MySQL) — is_active suffit pour bloquer la connexion
+        $user->update(['is_active' => $newActive]);
+
+        if (!$newActive) {
+            $user->tokens()->delete();
+        }
+
+        return response()->json([
+            'message'   => $newActive ? 'Compte active.' : 'Compte desactive.',
+            'is_active' => $newActive,
+            'status'    => $user->status,
+        ]);
+    }
+
     // ── GET /api/auth/pending-users (directeur) ───────────────
     public function pendingUsers(Request $request)
     {
@@ -599,6 +639,7 @@ class AuthController extends Controller
                 'email'      => $u->email,
                 'role'       => $u->role,
                 'status'     => $u->status ?? 'active',
+                'is_active'  => (bool) $u->is_active,
                 'service'    => $u->service?->name,
                 'has_face'   => !empty($u->face_embedding),
                 'created_at' => $u->created_at?->format('d/m/Y'),

@@ -13,7 +13,8 @@ const PRIMARY_DARK = '#0288D1';
 const GREEN        = '#43A047';
 const ORANGE       = '#FB8C00';
 const RED          = '#E53935';
-const BASE         = 'http://localhost:8000/api';
+import { environment } from '../../environments/environment';
+const BASE         = environment.apiUrl;
 
 const AGENTS_SPECIALISES = ['Psychologue', 'Assistant général', 'Kinésithérapeute', 'Diabétologue'];
 

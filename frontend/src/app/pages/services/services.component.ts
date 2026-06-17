@@ -1,7 +1,8 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
+import { forkJoin } from 'rxjs';
 import { ApiService } from '../../shared/api.service';
 import { Hospital, Service } from '../../shared/models';
 
@@ -12,6 +13,7 @@ const GREEN = '#43A047'; const ORANGE = '#FB8C00'; const RED = '#E53935';
   selector: 'app-services',
   standalone: true,
   imports: [CommonModule, RouterLink, LucideAngularModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
 <div class="flex flex-col h-full bg-background">
 
@@ -163,9 +165,15 @@ export class ServicesComponent implements OnInit {
 
   ngOnInit() {
     this.hospitalId = parseInt(this.route.snapshot.paramMap.get('id') ?? '0', 10);
-    this.api.getHospital(this.hospitalId).subscribe({ next: h => this.hospital.set(h), error: () => {} });
-    this.api.listServices(this.hospitalId).subscribe({
-      next: s => { this.services.set(s); this.loading.set(false); },
+    forkJoin({
+      hospital: this.api.getHospital(this.hospitalId),
+      services: this.api.listServices(this.hospitalId),
+    }).subscribe({
+      next: ({ hospital, services }) => {
+        this.hospital.set(hospital);
+        this.services.set(services);
+        this.loading.set(false);
+      },
       error: () => this.loading.set(false),
     });
   }

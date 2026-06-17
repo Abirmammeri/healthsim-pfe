@@ -15,6 +15,7 @@ import { SimulationStoreService } from '../../shared/simulation-store.service';
 import { SimulationHistoryService } from '../../shared/simulation-history.service';
 import { ToastService } from '../../shared/toast.service';
 import { ResourceManagementPanelComponent } from '../../shared/resource-management-panel.component';
+import { environment } from '../../../environments/environment';
 
 const GREEN  = '#43A047';
 const ORANGE = '#FB8C00';
@@ -965,7 +966,7 @@ export class SimulationComponent implements OnInit, OnDestroy {
     const now = new Date();
     const scenarioName = `Scénario — ${now.toLocaleDateString('fr-FR')} à ${now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
     const inputData = { hospital_id: id, scenario_name: scenarioName, target_doctors: this.totalDoctors(), target_nurses: this.totalNurses(), target_beds: this.services().reduce((a, s) => a + (Number(s.beds)||0), 0), active_patients: this.services().reduce((a, s) => a + (Number(s.patients)||0), 0), services: this.services() };
-    this.http.post<any>('http://localhost:8000/api/simulation-history', { scenario_name: scenarioName, input_data: inputData, result_data: null, changes_data: this.buildChanges() }).subscribe({
+    this.http.post<any>(`${environment.apiUrl}/simulation-history`, { scenario_name: scenarioName, input_data: inputData, result_data: null, changes_data: this.buildChanges() }).subscribe({
       next: () => { this.savingScenario.set(false); this.toasts.show({ title: 'Scénario enregistré !', description: scenarioName, variant: 'success' }); },
       error: () => { this.savingScenario.set(false); this.toasts.show({ title: 'Erreur', description: 'Impossible de sauvegarder.', variant: 'destructive' }); }
     });

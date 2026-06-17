@@ -5,7 +5,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { ApiService } from './api.service';
 import { Service } from './models';
 
-const FLASK = 'http://localhost:5000';
+import { environment } from '../../environments/environment';
+const FLASK = environment.simUrl;
 
 @Component({
   selector: 'app-ml-prediction',

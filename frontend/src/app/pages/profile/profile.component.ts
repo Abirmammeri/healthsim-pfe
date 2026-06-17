@@ -7,7 +7,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { HttpClient } from '@angular/common/http';
 import { AuthService } from '../../shared/auth.service';
 
-const BASE = 'http://localhost:8000/api';
+import { environment } from '../../../environments/environment';
+const BASE = environment.apiUrl;
 
 @Component({
   selector: 'app-profile',
@@ -179,26 +180,26 @@ const BASE = 'http://localhost:8000/api';
         </button>
       </div>
 
-      <div class="bg-card rounded-2xl border p-6" style="border-color:#E5393530">
-        <h2 class="font-bold mb-2 flex items-center gap-2" style="color:#E53935">
-          <lucide-icon name="trash-2" class="w-4 h-4"></lucide-icon>
-          Supprimer le compte
+      <div *ngIf="auth.isDirecteur()" class="bg-card rounded-2xl border p-6" style="border-color:#FB8C0030">
+        <h2 class="font-bold mb-2 flex items-center gap-2" style="color:#FB8C00">
+          <lucide-icon name="pause-circle" class="w-4 h-4"></lucide-icon>
+          Desactiver mon compte
         </h2>
-        <p class="text-sm text-muted-foreground mb-4">Cette action est irreversible.</p>
-        <div *ngIf="!showDeleteConfirm()">
-          <button type="button" (click)="showDeleteConfirm.set(true)" class="px-5 py-2.5 rounded-xl text-white text-sm font-semibold" style="background:#E53935">
-            Supprimer mon compte
+        <p class="text-sm text-muted-foreground mb-4">Le compte sera desactive. Vous ne pourrez plus vous connecter jusqu'a reactivation par un administrateur.</p>
+        <div *ngIf="!showDeactivateConfirm()">
+          <button type="button" (click)="showDeactivateConfirm.set(true)" class="px-5 py-2.5 rounded-xl text-white text-sm font-semibold" style="background:#FB8C00">
+            Desactiver mon compte
           </button>
         </div>
-        <div *ngIf="showDeleteConfirm()" class="space-y-3">
-          <input [(ngModel)]="deletePassword" type="password" placeholder="Entrez votre mot de passe pour confirmer"
+        <div *ngIf="showDeactivateConfirm()" class="space-y-3">
+          <input [(ngModel)]="deactivatePassword" type="password" placeholder="Entrez votre mot de passe pour confirmer"
                  class="w-full px-3 py-2.5 rounded-xl border text-sm focus:outline-none"
-                 style="border-color:#E5393540;background:#E5393508"/>
+                 style="border-color:#FB8C0040;background:#FB8C0008"/>
           <div class="flex gap-3">
-            <button type="button" (click)="showDeleteConfirm.set(false)" class="flex-1 py-2 rounded-xl border border-border text-sm">Annuler</button>
-            <button type="button" (click)="deleteAccount()" [disabled]="loading() || !deletePassword"
-                    class="flex-1 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50" style="background:#E53935">
-              Confirmer
+            <button type="button" (click)="showDeactivateConfirm.set(false)" class="flex-1 py-2 rounded-xl border border-border text-sm">Annuler</button>
+            <button type="button" (click)="deactivateAccount()" [disabled]="loading() || !deactivatePassword"
+                    class="flex-1 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50" style="background:#FB8C00">
+              Confirmer la desactivation
             </button>
           </div>
         </div>
@@ -372,12 +373,16 @@ const BASE = 'http://localhost:8000/api';
               <div class="text-xs text-muted-foreground">{{ u.email }} · {{ u.service ?? u.role }}</div>
             </div>
             <span class="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                  [style.background]="u.status==='active'?'#43A04715':u.status==='pending'?'#FB8C0015':'#E5393515'"
-                  [style.color]="u.status==='active'?'#43A047':u.status==='pending'?'#FB8C00':'#E53935'">
-              {{ u.status === 'active' ? 'Actif' : u.status === 'pending' ? 'En attente' : 'Rejete' }}
+                  [style.background]="!u.is_active?'rgba(0,0,0,0.08)':u.status==='active'?'#43A04715':u.status==='pending'?'#FB8C0015':'#E5393515'"
+                  [style.color]="!u.is_active?'#888':u.status==='active'?'#43A047':u.status==='pending'?'#FB8C00':'#E53935'">
+              {{ !u.is_active ? 'Desactive' : u.status === 'active' ? 'Actif' : u.status === 'pending' ? 'En attente' : 'Rejete' }}
             </span>
-            <button type="button" (click)="deleteUser(u.id)" class="p-1.5 rounded-lg hover:bg-red-50 text-muted-foreground hover:text-red-500 flex-shrink-0">
-              <lucide-icon name="trash-2" class="w-4 h-4"></lucide-icon>
+            <button type="button" (click)="toggleUserStatus(u.id, u.is_active)"
+                    [title]="u.is_active ? 'Desactiver ce compte' : 'Activer ce compte'"
+                    class="p-1.5 rounded-lg flex-shrink-0 transition-colors"
+                    [style.background]="u.is_active ? '#FB8C0015' : '#43A04715'"
+                    [style.color]="u.is_active ? '#FB8C00' : '#43A047'">
+              <lucide-icon [name]="u.is_active ? 'pause-circle' : 'play-circle'" class="w-4 h-4"></lucide-icon>
             </button>
           </div>
         </div>
@@ -392,13 +397,13 @@ export class ProfileComponent implements OnInit {
   auth: AuthService = inject(AuthService);
   private http = inject(HttpClient);
 
-  loading            = signal(false);
-  approvingId        = signal<number|null>(null);
-  msg                = signal<string|null>(null);
-  msgType            = signal<'ok'|'err'>('ok');
-  activeTab          = signal('profile');
-  showDeleteConfirm  = signal(false);
-  faceStreamActive   = signal(false);
+  loading               = signal(false);
+  approvingId           = signal<number|null>(null);
+  msg                   = signal<string|null>(null);
+  msgType               = signal<'ok'|'err'>('ok');
+  activeTab             = signal('profile');
+  showDeactivateConfirm = signal(false);
+  faceStreamActive      = signal(false);
   faceCaptured       = signal(false);
   profileUnlocked    = signal(false);
   pendingUsers       = signal<any[]>([]);
@@ -413,11 +418,11 @@ export class ProfileComponent implements OnInit {
   private faceStream: MediaStream|null = null;
   private faceImage = '';
 
-  profile         = { prenom: '', nom: '', phone: '' };
-  profilePassword = '';
-  emailForm       = { newEmail: '', password: '' };
-  pwdForm         = { current: '', newPwd: '', confirm: '' };
-  deletePassword  = '';
+  profile             = { prenom: '', nom: '', phone: '' };
+  profilePassword     = '';
+  emailForm           = { newEmail: '', password: '' };
+  pwdForm             = { current: '', newPwd: '', confirm: '' };
+  deactivatePassword  = '';
 
   get tabs() {
     const base = [
@@ -518,11 +523,25 @@ export class ProfileComponent implements OnInit {
     });
   }
 
-  deleteAccount() {
+  deactivateAccount() {
     this.loading.set(true);
-    this.http.delete<any>(`${BASE}/auth/delete-account`, { body: { password: this.deletePassword } }).subscribe({
+    this.http.patch<any>(`${BASE}/auth/deactivate-account`, { password: this.deactivatePassword }).subscribe({
       next: () => { this.loading.set(false); this.auth.logout(); },
       error: err => { this.loading.set(false); this.showMsg(err.error?.message || 'Erreur.', 'err'); }
+    });
+  }
+
+  toggleUserStatus(id: number, isActive: boolean) {
+    const action = isActive ? 'desactiver' : 'activer';
+    if (!confirm(`Voulez-vous ${action} ce compte ?`)) return;
+    this.http.patch<any>(`${BASE}/auth/toggle-user-status/${id}`, {}).subscribe({
+      next: res => {
+        this.showMsg(res.message);
+        this.allUsers.update(users => users.map(u =>
+          u.id === id ? { ...u, is_active: res.is_active, status: res.status } : u
+        ));
+      },
+      error: err => this.showMsg(err.error?.message || 'Erreur.', 'err')
     });
   }
 

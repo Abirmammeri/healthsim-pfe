@@ -1,10 +1,11 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { HttpClient } from '@angular/common/http';
 import { ApiService } from '../../shared/api.service';
 import { Service } from '../../shared/models';
+import { environment } from '../../../environments/environment';
 
 const PRIMARY = '#00BCD4'; const PRIMARY_DARK = '#0288D1';
 const GREEN = '#43A047'; const ORANGE = '#FB8C00'; const RED = '#E53935';
@@ -15,6 +16,7 @@ type Category = 'SSI' | 'IIP' | 'ESI' | 'TI';
   selector: 'app-service-kpi-category',
   standalone: true,
   imports: [CommonModule, LucideAngularModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
 <div class="flex flex-col h-full bg-background">
 
@@ -621,7 +623,7 @@ export class ServiceKpiCategoryComponent implements OnInit {
 
   // ✅ Appel Flask direct — contourne Laravel qui retourne A4=0
   private fixA4FromFlask(svc: any, kpis: any) {
-    this.http.post<any>('http://localhost:5000/service-kpis', {
+    this.http.post<any>(`${environment.simUrl}/service-kpis`, {
       patients:             svc.patients             || 1,
       beds:                 svc.beds                 || 1,
       doctors:              svc.doctors              || 1,

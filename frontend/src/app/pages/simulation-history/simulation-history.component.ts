@@ -6,7 +6,8 @@ import { HttpClient } from '@angular/common/http';
 import { LucideAngularModule } from 'lucide-angular';
 import { SimulationStoreService } from '../../shared/simulation-store.service';
 
-const BASE = 'http://localhost:8000/api';
+import { environment } from '../../../environments/environment';
+const BASE = environment.apiUrl;
 const PRIMARY = '#00BCD4';
 const PRIMARY_DARK = '#0288D1';
 

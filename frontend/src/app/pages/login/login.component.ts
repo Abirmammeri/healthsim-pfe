@@ -7,7 +7,8 @@ import { HttpClient } from '@angular/common/http';
 import { AuthService } from '../../shared/auth.service';
 import { Router } from '@angular/router';
 
-const BASE = 'http://localhost:8000/api';
+import { environment } from '../../../environments/environment';
+const BASE = environment.apiUrl;
 type PageMode = 'login' | 'register' | 'forgot' | 'otp';
 type LoginMode = 'password' | 'face';
 type RegStep = 'info' | 'verify' | 'password' | 'phone' | 'face' | 'done';
@@ -635,10 +636,9 @@ export class LoginComponent implements OnDestroy {
     if (!this.reg.email) { this.error.set('Entrez votre email.'); return; }
     this.loading.set(true); this.error.set(null);
     this.http.post<any>(`${BASE}/auth/send-verification`, { email: this.reg.email }).subscribe({
-      next: res => {
+      next: _ => {
         this.loading.set(false);
-        if (res.dev_otp) this.success.set(`Code de dev : ${res.dev_otp}`);
-        else this.success.set('Code envoye sur ' + this.reg.email);
+        this.success.set('Code envoye sur ' + this.reg.email);
         this.regStep.set('verify');
       },
       error: err => { this.loading.set(false); this.error.set(err.error?.message || 'Erreur envoi.'); }
@@ -699,24 +699,12 @@ export class LoginComponent implements OnDestroy {
     this.http.post<any>(`${BASE}/auth/forgot-password`, { email: this.forgotEmail, method: this.forgotMethod(), phone: this.forgotPhone || null }).subscribe({
       next: res => {
         this.loading.set(false);
-        if (res.dev_otp) {
-          this.success.set(`Code de demonstration : ${res.dev_otp}`);
-          setTimeout(() => this.page.set('otp'), 5000);
-        } else {
-          this.success.set(res.message);
-          setTimeout(() => this.page.set('otp'), 2000);
-        }
+        this.success.set(res.message || 'Code envoye. Consultez votre ' + (this.forgotMethod() === 'email' ? 'email' : 'telephone') + '.');
+        setTimeout(() => this.page.set('otp'), 2000);
       },
       error: err => {
         this.loading.set(false);
-        const data = err.error || {};
-        if (data.dev_otp) {
-          // SMS echoue mais code disponible pour demo
-          this.success.set(`Code de demonstration : ${data.dev_otp}`);
-          setTimeout(() => this.page.set('otp'), 5000);
-        } else {
-          this.error.set(data.message || 'Erreur.');
-        }
+        this.error.set(err.error?.message || 'Erreur lors de l\'envoi du code.');
       }
     });
   }

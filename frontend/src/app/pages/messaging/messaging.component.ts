@@ -7,7 +7,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { HttpClient } from '@angular/common/http';
 import { AuthService } from '../../shared/auth.service';
 
-const BASE = 'http://localhost:8000/api';
+import { environment } from '../../../environments/environment';
+const BASE = environment.apiUrl;
 
 interface ChatUser   { id: number; name: string; role: string; service?: string; }
 interface Conversation {

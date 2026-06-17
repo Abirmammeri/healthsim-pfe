@@ -6,7 +6,8 @@ import { Router } from '@angular/router';
 import { tap, catchError } from 'rxjs/operators';
 import { throwError } from 'rxjs';
 
-const BASE = 'http://localhost:8000/api';
+import { environment } from '../../environments/environment';
+const BASE = environment.apiUrl;
 
 export interface AuthUser {
   id: number;

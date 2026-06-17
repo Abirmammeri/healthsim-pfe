@@ -7,8 +7,9 @@ import {
   DashboardStats, Id, Equipment
 } from './models';
 
-const BASE = 'http://127.0.0.1:8000/api';
-const SIM  = 'http://127.0.0.1:5000';
+import { environment } from '../../environments/environment';
+const BASE = environment.apiUrl;
+const SIM  = environment.simUrl;
 
 @Injectable({ providedIn: 'root' })
 export class ApiService {

@@ -1,10 +1,12 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { HttpClient } from '@angular/common/http';
+import { forkJoin } from 'rxjs';
 import { ApiService } from '../../shared/api.service';
 import { Alert, DashboardStats, Hospital, Service } from '../../shared/models';
+import { environment } from '../../../environments/environment';
 
 const PRIMARY = '#00BCD4'; const PRIMARY_DARK = '#0288D1';
 const GREEN = '#43A047'; const ORANGE = '#FB8C00'; const RED = '#E53935';
@@ -15,6 +17,7 @@ type KpiCategory = 'SSI' | 'IIP' | 'ESI' | 'TI' | null;
   selector: 'app-hospital-dashboard',
   standalone: true,
   imports: [CommonModule, RouterLink, LucideAngularModule],
+  changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
 <div class="flex flex-col h-full bg-background">
 
@@ -323,16 +326,20 @@ export class HospitalDashboardComponent implements OnInit {
 
   ngOnInit() {
     this.hospitalId = parseInt(this.route.snapshot.paramMap.get('id') ?? '0', 10);
-    this.api.getHospital(this.hospitalId).subscribe({ next: h => this.hospital.set(h), error: () => {} });
-    this.api.listServices(this.hospitalId).subscribe({
-      next: (svcs: Service[]) => {
-        this.services.set(svcs);
-        this.computeGlobalKpis(svcs);
+    forkJoin({
+      hospital: this.api.getHospital(this.hospitalId),
+      services: this.api.listServices(this.hospitalId),
+      alerts:   this.api.getHospitalAlerts(this.hospitalId),
+    }).subscribe({
+      next: ({ hospital, services, alerts }) => {
+        this.hospital.set(hospital);
+        this.services.set(services);
+        this.alerts.set(alerts);
+        this.computeGlobalKpis(services);
         this.loading.set(false);
       },
       error: () => this.loading.set(false),
     });
-    this.api.getHospitalAlerts(this.hospitalId).subscribe({ next: a => this.alerts.set(a), error: () => {} });
   }
 
   private computeGlobalKpis(svcs: Service[]) {
@@ -404,7 +411,7 @@ export class HospitalDashboardComponent implements OnInit {
         lambda_patients_jour: s.lambda_patients_jour || 35,
         simulation_hours:     s.simulation_hours     || 8
       };
-      this.http.post<any>('http://localhost:5000/service-kpis', body).subscribe({
+      this.http.post<any>(`${environment.simUrl}/service-kpis`, body).subscribe({
         next: (flask: any) => {
           const a4 = +(flask?.SSI?.A4_temps_attente ?? 0);
           if (a4 > 0) {
