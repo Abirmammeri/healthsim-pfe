@@ -12,4 +12,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["sh", "-c", "gunicorn face_service:app --bind 0.0.0.0:${PORT} --timeout 120"]
+ENV APP_MODULE=face_service:app
+CMD ["sh", "-c", "gunicorn ${APP_MODULE} --bind 0.0.0.0:${PORT} --timeout 120"]
